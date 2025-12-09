@@ -86,6 +86,44 @@
     // Common formats: ARGB2101010 (2-bit alpha + 3x10-bit RGB) or RGBX1010102
     info->isPacked10Bit = (info->bitsPerComponent == 10 && info->bitsPerPixel == 32);
 
+    // Detect HDR color space from CGColorSpace name
+    // Default to sRGB
+    info->transferFunction = kTransferSRGB;
+    info->colorPrimaries = kPrimariesSRGB;
+
+    CGColorSpaceRef colorSpace = CGImageGetColorSpace(imageRef);
+    if (colorSpace) {
+        CFStringRef name = CGColorSpaceCopyName(colorSpace);
+        if (name) {
+            // Check for PQ (Perceptual Quantizer) transfer function - HDR10, Dolby Vision
+            if (CFStringFind(name, CFSTR("PQ"), 0).location != kCFNotFound ||
+                CFStringFind(name, CFSTR("2100_PQ"), 0).location != kCFNotFound) {
+                info->transferFunction = kTransferPQ;
+            }
+            // Check for HLG (Hybrid Log-Gamma) - BBC/NHK HDR
+            else if (CFStringFind(name, CFSTR("HLG"), 0).location != kCFNotFound ||
+                     CFStringFind(name, CFSTR("2100_HLG"), 0).location != kCFNotFound) {
+                info->transferFunction = kTransferHLG;
+            }
+            // Check for linear transfer
+            else if (CFStringFind(name, CFSTR("Linear"), 0).location != kCFNotFound) {
+                info->transferFunction = kTransferLinear;
+            }
+
+            // Check for color primaries
+            if (CFStringFind(name, CFSTR("2020"), 0).location != kCFNotFound ||
+                CFStringFind(name, CFSTR("2100"), 0).location != kCFNotFound) {
+                info->colorPrimaries = kPrimariesBT2020;
+            }
+            else if (CFStringFind(name, CFSTR("P3"), 0).location != kCFNotFound ||
+                     CFStringFind(name, CFSTR("DisplayP3"), 0).location != kCFNotFound) {
+                info->colorPrimaries = kPrimariesDisplayP3;
+            }
+
+            CFRelease(name);
+        }
+    }
+
     return true;
 }
 

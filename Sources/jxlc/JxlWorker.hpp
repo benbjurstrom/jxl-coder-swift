@@ -52,6 +52,21 @@ bool EncodeJxlOneshot(const std::vector<uint8_t> &pixels, const uint32_t xsize,
                       int effort,
                       int decodingSpeed);
 
+// Transfer function enum (must match JXLTransferFunction in JXLSystemImage.hpp)
+enum JxlTransferFunctionType {
+    TransferSRGB = 0,
+    TransferLinear = 1,
+    TransferPQ = 2,      // HDR10 Perceptual Quantizer
+    TransferHLG = 3      // Hybrid Log-Gamma
+};
+
+// Color primaries enum (must match JXLColorPrimaries in JXLSystemImage.hpp)
+enum JxlColorPrimariesType {
+    PrimariesSRGB = 0,      // sRGB/Rec.709
+    PrimariesDisplayP3 = 1,
+    PrimariesBT2020 = 2     // Rec.2020 wide gamut
+};
+
 // HDR-aware encoder that preserves bit depth and color profile
 bool EncodeJxlHDR(
     const std::vector<uint8_t>& pixels,
@@ -61,7 +76,9 @@ bool EncodeJxlHDR(
     int containerBitsPerSample,              // Container size: 8, 16, 32
     int originalBitsPerSample,               // Original precision: 8, 10, 12, 16 (for better compression)
     bool isFloat,                            // true for float16/float32
-    const std::vector<uint8_t>* iccProfile,  // can be nullptr for sRGB fallback
+    const std::vector<uint8_t>* iccProfile,  // can be nullptr
+    JxlTransferFunctionType transferFunction, // Transfer function when no ICC profile
+    JxlColorPrimariesType colorPrimaries,     // Color primaries when no ICC profile
     JxlCompressionOption compressionOption,
     float compressionDistance,
     int effort,

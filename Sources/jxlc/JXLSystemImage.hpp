@@ -43,6 +43,21 @@
 #include <vector>
 #endif
 
+// HDR transfer function types
+typedef NS_ENUM(NSInteger, JXLTransferFunction) {
+    kTransferSRGB NS_SWIFT_NAME(srgb) = 0,
+    kTransferLinear NS_SWIFT_NAME(linear) = 1,
+    kTransferPQ NS_SWIFT_NAME(pq) = 2,      // Perceptual Quantizer (HDR10, Dolby Vision)
+    kTransferHLG NS_SWIFT_NAME(hlg) = 3,    // Hybrid Log-Gamma (BBC/NHK HDR)
+};
+
+// Color primaries
+typedef NS_ENUM(NSInteger, JXLColorPrimaries) {
+    kPrimariesSRGB NS_SWIFT_NAME(srgb) = 0,       // sRGB/Rec.709
+    kPrimariesDisplayP3 NS_SWIFT_NAME(displayP3) = 1,
+    kPrimariesBT2020 NS_SWIFT_NAME(bt2020) = 2,   // Rec.2020 (wide gamut HDR)
+};
+
 // Image info structure for HDR-aware encoding
 typedef struct {
     int width;
@@ -56,6 +71,8 @@ typedef struct {
     bool alphaFirst;           // ARGB vs RGBA
     bool byteOrderLittle;      // byte order for 16/32 bit
     bool isPacked10Bit;        // true for ARGB2101010/RGBX1010102 packed formats
+    JXLTransferFunction transferFunction;  // Transfer function (sRGB, PQ, HLG)
+    JXLColorPrimaries colorPrimaries;      // Color primaries (sRGB, P3, BT.2020)
 } JXLImageInfo;
 
 typedef NS_ENUM(NSInteger, JXLColorSpace)  {

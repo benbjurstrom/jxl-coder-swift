@@ -429,6 +429,8 @@ static inline JxlCompressionOption toJxlCompressionOption(JXLCompressionOption o
             info.originalBitsPerComponent, // Original precision (e.g., 10 for better compression)
             info.isFloat,
             iccProfile.empty() ? nullptr : &iccProfile,
+            static_cast<JxlTransferFunctionType>(info.transferFunction),
+            static_cast<JxlColorPrimariesType>(info.colorPrimaries),
             toJxlCompressionOption(compressionOption),
             distance,
             effort,
