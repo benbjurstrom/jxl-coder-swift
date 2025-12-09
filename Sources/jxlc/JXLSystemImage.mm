@@ -788,7 +788,10 @@ static void unpackPacked10BitToRGB16(const uint32_t* src, uint16_t* dst, size_t 
 
     // For 16-bit integer data, detect actual bit depth (may be 10-bit, 12-bit, etc.)
     // This helps improve compression for HEIC/RAW images stored in 16-bit containers
-    if (info->bitsPerComponent == 16 && !info->isFloat && !info->isPacked10Bit) {
+    // IMPORTANT: Skip bit depth detection for PQ/HLG HDR content - these use the full 16-bit range
+    // for luminance encoding and should not be truncated
+    bool isHDRTransfer = (info->transferFunction == kTransferPQ || info->transferFunction == kTransferHLG);
+    if (info->bitsPerComponent == 16 && !info->isFloat && !info->isPacked10Bit && !isHDRTransfer) {
         int actualBitDepth = detectActualBitDepth16(
             (const uint16_t*)buffer.data(),
             pixelCount,
