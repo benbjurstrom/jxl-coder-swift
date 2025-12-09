@@ -86,64 +86,96 @@
     // Common formats: ARGB2101010 (2-bit alpha + 3x10-bit RGB) or RGBX1010102
     info->isPacked10Bit = (info->bitsPerComponent == 10 && info->bitsPerPixel == 32);
 
-    // Detect HDR color space from CGColorSpace name
+    // Detect HDR color space from CGColorSpace
     // Default to sRGB
     info->transferFunction = kTransferSRGB;
     info->colorPrimaries = kPrimariesSRGB;
 
     CGColorSpaceRef colorSpace = CGImageGetColorSpace(imageRef);
     if (colorSpace) {
+        bool detectedFromName = false;
         CFStringRef name = CGColorSpaceCopyName(colorSpace);
-        if (name) {
-            // Check for PQ (Perceptual Quantizer) transfer function - HDR10, Dolby Vision
-            if (CFStringFind(name, CFSTR("PQ"), 0).location != kCFNotFound ||
-                CFStringFind(name, CFSTR("2100_PQ"), 0).location != kCFNotFound) {
-                info->transferFunction = kTransferPQ;
-            }
-            // Check for HLG (Hybrid Log-Gamma) - BBC/NHK HDR
-            else if (CFStringFind(name, CFSTR("HLG"), 0).location != kCFNotFound ||
-                     CFStringFind(name, CFSTR("2100_HLG"), 0).location != kCFNotFound) {
-                info->transferFunction = kTransferHLG;
-            }
-            // Check for linear transfer
-            else if (CFStringFind(name, CFSTR("Linear"), 0).location != kCFNotFound) {
-                info->transferFunction = kTransferLinear;
-            }
 
-            // Check for color primaries
-            if (CFStringFind(name, CFSTR("2020"), 0).location != kCFNotFound ||
-                CFStringFind(name, CFSTR("2100"), 0).location != kCFNotFound) {
-                info->colorPrimaries = kPrimariesBT2020;
-            }
-            else if (CFStringFind(name, CFSTR("P3"), 0).location != kCFNotFound ||
-                     CFStringFind(name, CFSTR("DisplayP3"), 0).location != kCFNotFound) {
-                info->colorPrimaries = kPrimariesDisplayP3;
+        if (name) {
+            // Check if it's a known named color space (not "unnamed")
+            bool isUnnamed = (CFStringCompare(name, CFSTR("unnamed"), 0) == kCFCompareEqualTo);
+
+            if (!isUnnamed) {
+                // Check for PQ (Perceptual Quantizer) transfer function - HDR10, Dolby Vision
+                if (CFStringFind(name, CFSTR("PQ"), 0).location != kCFNotFound ||
+                    CFStringFind(name, CFSTR("2100_PQ"), 0).location != kCFNotFound) {
+                    info->transferFunction = kTransferPQ;
+                    detectedFromName = true;
+                }
+                // Check for HLG (Hybrid Log-Gamma) - BBC/NHK HDR
+                else if (CFStringFind(name, CFSTR("HLG"), 0).location != kCFNotFound ||
+                         CFStringFind(name, CFSTR("2100_HLG"), 0).location != kCFNotFound) {
+                    info->transferFunction = kTransferHLG;
+                    detectedFromName = true;
+                }
+                // Check for linear transfer
+                else if (CFStringFind(name, CFSTR("Linear"), 0).location != kCFNotFound) {
+                    info->transferFunction = kTransferLinear;
+                    detectedFromName = true;
+                }
+
+                // Check for color primaries from name
+                if (CFStringFind(name, CFSTR("2020"), 0).location != kCFNotFound ||
+                    CFStringFind(name, CFSTR("2100"), 0).location != kCFNotFound) {
+                    info->colorPrimaries = kPrimariesBT2020;
+                    detectedFromName = true;
+                }
+                else if (CFStringFind(name, CFSTR("P3"), 0).location != kCFNotFound ||
+                         CFStringFind(name, CFSTR("DisplayP3"), 0).location != kCFNotFound) {
+                    info->colorPrimaries = kPrimariesDisplayP3;
+                    detectedFromName = true;
+                }
             }
 
             CFRelease(name);
-        } else {
-            // Name is NULL - try to detect from color space properties
-            // Check if it's a wide gamut space by examining the color space
-            CGColorSpaceModel model = CGColorSpaceGetModel(colorSpace);
-            if (model == kCGColorSpaceModelRGB) {
-                // For RGB spaces without a name, check if we can identify it
-                // by comparing to known color spaces
-                CGColorSpaceRef displayP3 = CGColorSpaceCreateWithName(kCGColorSpaceDisplayP3);
-                CGColorSpaceRef sRGB = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        }
 
-                if (displayP3 && CFEqual(colorSpace, displayP3)) {
-                    info->colorPrimaries = kPrimariesDisplayP3;
-                } else if (sRGB && CFEqual(colorSpace, sRGB)) {
-                    info->colorPrimaries = kPrimariesSRGB;
-                } else {
-                    // Unknown RGB space - assume Display P3 for iPhone photos
-                    // as they're typically shot in P3
-                    // We'll rely on ICC profile if available
-                    info->colorPrimaries = kPrimariesDisplayP3;
+        // If name-based detection failed (NULL, "unnamed", or unrecognized),
+        // use CGColorSpace API functions to detect HDR characteristics
+        if (!detectedFromName) {
+            // Use CGColorSpace API functions for detection
+            // These provide accurate information even for "unnamed" color spaces
+
+            // Check for BT.2100 transfer function (PQ or HLG) - macOS 11.0+, iOS 14.0+
+            if (@available(macOS 11.0, iOS 14.0, *)) {
+                if (CGColorSpaceUsesITUR_2100TF(colorSpace)) {
+                    // BT.2100 uses either PQ or HLG - default to PQ as it's more common
+                    // for HDR photo capture. HLG is typically used for broadcast.
+                    info->transferFunction = kTransferPQ;
+                    // BT.2100 always uses BT.2020 primaries
+                    info->colorPrimaries = kPrimariesBT2020;
+                    detectedFromName = true;  // Mark as detected
+                }
+            }
+
+            // Additional detection if still not identified - macOS 10.15+, iOS 13.0+
+            if (!detectedFromName) {
+                if (@available(macOS 10.15, iOS 13.0, *)) {
+                    if (CGColorSpaceIsHDR(colorSpace)) {
+                        // HDR but not BT.2100 - could be extended range Display P3 or similar
+                        // Keep sRGB transfer but note it's HDR (extended range)
+                        // For wide gamut HDR, check primaries
+                        if (@available(macOS 10.12, iOS 10.0, *)) {
+                            if (CGColorSpaceIsWideGamutRGB(colorSpace)) {
+                                info->colorPrimaries = kPrimariesDisplayP3;
+                            }
+                        }
+                    }
                 }
 
-                if (displayP3) CGColorSpaceRelease(displayP3);
-                if (sRGB) CGColorSpaceRelease(sRGB);
+                // Check for wide gamut without HDR - macOS 10.12+, iOS 10.0+
+                if (@available(macOS 10.12, iOS 10.0, *)) {
+                    if (CGColorSpaceIsWideGamutRGB(colorSpace) &&
+                        info->colorPrimaries == kPrimariesSRGB) {
+                        // Wide gamut but not detected as HDR - likely Display P3
+                        info->colorPrimaries = kPrimariesDisplayP3;
+                    }
+                }
             }
         }
     }
