@@ -410,6 +410,16 @@ bool EncodeJxlHDR(
         basicInfo.exponent_bits_per_sample = 0;
     }
 
+    // Set intensity_target for HDR content - critical for correct luminance interpretation
+    // PQ (SMPTE ST 2084): designed for up to 10,000 nits peak luminance
+    // HLG: typically mastered for 1,000 nits (broadcast HDR)
+    // SDR: default ~255 nits (handled by JxlEncoderInitBasicInfo)
+    if (transferFunction == TransferPQ) {
+        basicInfo.intensity_target = 10000.0f;  // PQ max luminance
+    } else if (transferFunction == TransferHLG) {
+        basicInfo.intensity_target = 1000.0f;   // HLG reference luminance
+    }
+
     // Determine if we have a valid ICC profile to potentially use
     bool hasValidIccProfile = (iccProfile && !iccProfile->empty());
 
