@@ -451,11 +451,21 @@ bool EncodeJxlHDR(
         // No ICC profile or ICC profile rejected - use detected transfer function and primaries
         JxlColorEncoding color_encoding = {};
 
-        // For sRGB with sRGB primaries, use the helper function for reliability
+        // For standard sRGB, use the helper function for reliability
         if (transferFunction == TransferSRGB && colorPrimaries == PrimariesSRGB) {
             JxlColorEncodingSetToSRGB(&color_encoding, numChannels < 3);
-        } else {
-            // HDR or wide gamut - set up manually
+        }
+        // For Display P3 (sRGB transfer with P3 primaries), start from sRGB and change primaries
+        else if (transferFunction == TransferSRGB && colorPrimaries == PrimariesDisplayP3) {
+            JxlColorEncodingSetToSRGB(&color_encoding, numChannels < 3);
+            color_encoding.primaries = JXL_PRIMARIES_P3;
+        }
+        // For linear sRGB
+        else if (transferFunction == TransferLinear && colorPrimaries == PrimariesSRGB) {
+            JxlColorEncodingSetToLinearSRGB(&color_encoding, numChannels < 3);
+        }
+        else {
+            // HDR or other wide gamut - set up manually
             color_encoding.color_space = JXL_COLOR_SPACE_RGB;
             color_encoding.white_point = JXL_WHITE_POINT_D65;
             color_encoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;

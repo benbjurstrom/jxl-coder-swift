@@ -121,6 +121,30 @@
             }
 
             CFRelease(name);
+        } else {
+            // Name is NULL - try to detect from color space properties
+            // Check if it's a wide gamut space by examining the color space
+            CGColorSpaceModel model = CGColorSpaceGetModel(colorSpace);
+            if (model == kCGColorSpaceModelRGB) {
+                // For RGB spaces without a name, check if we can identify it
+                // by comparing to known color spaces
+                CGColorSpaceRef displayP3 = CGColorSpaceCreateWithName(kCGColorSpaceDisplayP3);
+                CGColorSpaceRef sRGB = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+
+                if (displayP3 && CFEqual(colorSpace, displayP3)) {
+                    info->colorPrimaries = kPrimariesDisplayP3;
+                } else if (sRGB && CFEqual(colorSpace, sRGB)) {
+                    info->colorPrimaries = kPrimariesSRGB;
+                } else {
+                    // Unknown RGB space - assume Display P3 for iPhone photos
+                    // as they're typically shot in P3
+                    // We'll rely on ICC profile if available
+                    info->colorPrimaries = kPrimariesDisplayP3;
+                }
+
+                if (displayP3) CGColorSpaceRelease(displayP3);
+                if (sRGB) CGColorSpaceRelease(sRGB);
+            }
         }
     }
 
