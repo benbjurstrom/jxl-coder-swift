@@ -30,7 +30,7 @@ The original library only supported 8-bit sRGB encoding, losing HDR data during 
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/anthropics/jxl-coder-swift.git", branch: "main")
+    .package(url: "https://github.com/benbjurstrom/jxl-coder-swift.git", branch: "main")
 ]
 ```
 
@@ -47,7 +47,7 @@ let image = UIImage(contentsOfFile: "/path/to/image.heic")!
 // Encode preserving full fidelity (lossless, max effort)
 let jxlData = try JXLCoder.encodeHDR(
     image: image,
-    compressionOption: .loseless,  // Use .lossy for smaller files
+    compressionOption: .lossless,  // Use .lossy for smaller files
     effort: 9                       // 1-9, higher = smaller but slower
 )
 
@@ -94,7 +94,7 @@ let data = try JXLCoder.encode(image: image)  // 8-bit sRGB only
 ```swift
 public static func encodeHDR(
     image: JXLPlatformImage,
-    compressionOption: JXLCompressionOption = .lossless,
+    compressionOption: JXLCompressionOption = .lossless,  // fixed typo from original
     effort: Int = 7,
     quality: Int = 0,
     decodingSpeed: JXLEncoderDecodingSpeed = .slowest
@@ -103,7 +103,7 @@ public static func encodeHDR(
 
 **Parameters:**
 - `image`: Source UIImage/NSImage (any bit depth)
-- `compressionOption`: `.loseless` (default, best for archival) or `.lossy`
+- `compressionOption`: `.lossless` (default, best for archival) or `.lossy`
 - `effort`: 1-9, compression effort (default 7). Higher = smaller file, slower encode
 - `quality`: 0-100, only for lossy mode. 0 = best quality (distance ~1.0)
 - `decodingSpeed`: Trade-off between decode speed and file size

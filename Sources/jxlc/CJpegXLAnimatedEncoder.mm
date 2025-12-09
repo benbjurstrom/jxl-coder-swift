@@ -67,11 +67,11 @@ public:
     }
 
     switch (compressionOption) {
-        case kLoseless:
-            jCompressionOption = loseless;
+        case kLossless:
+            jCompressionOption = lossless;
             break;
         case kLossy:
-            jCompressionOption = loosy;
+            jCompressionOption = lossy;
             break;
     }
 

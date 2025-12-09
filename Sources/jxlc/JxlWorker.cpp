@@ -258,7 +258,7 @@ bool EncodeJxlOneshot(const std::vector<uint8_t> &pixels, const uint32_t xsize,
     basicInfo.xsize = xsize;
     basicInfo.ysize = ysize;
     basicInfo.bits_per_sample = 8;
-    basicInfo.uses_original_profile = compressionOption == loosy ? JXL_FALSE : JXL_TRUE;
+    basicInfo.uses_original_profile = compressionOption == lossy ? JXL_FALSE : JXL_TRUE;
     basicInfo.num_color_channels = 3;
 
     if (colorspace == rgba) {
@@ -304,7 +304,7 @@ bool EncodeJxlOneshot(const std::vector<uint8_t> &pixels, const uint32_t xsize,
         return false;
     }
 
-    if (JXL_ENC_SUCCESS != JxlEncoderSetFrameLossless(frameSettings, compressionOption == loseless)) {
+    if (JXL_ENC_SUCCESS != JxlEncoderSetFrameLossless(frameSettings, compressionOption == lossless)) {
         return false;
     }
 
@@ -407,7 +407,7 @@ bool EncodeJxlHDR(
     }
 
     // For lossless with ICC profile, must use original profile
-    basicInfo.uses_original_profile = (compressionOption == loseless) ? JXL_TRUE : JXL_FALSE;
+    basicInfo.uses_original_profile = (compressionOption == lossless) ? JXL_TRUE : JXL_FALSE;
 
     if (numChannels == 4) {
         basicInfo.num_extra_channels = 1;
@@ -462,7 +462,7 @@ bool EncodeJxlHDR(
 
     // Lossless mode
     if (JXL_ENC_SUCCESS != JxlEncoderSetFrameLossless(
-            frameSettings, compressionOption == loseless)) {
+            frameSettings, compressionOption == lossless)) {
         return false;
     }
 
@@ -479,7 +479,7 @@ bool EncodeJxlHDR(
     }
 
     // Distance (quality) - only applies to lossy
-    if (compressionOption != loseless) {
+    if (compressionOption != lossless) {
         if (JXL_ENC_SUCCESS != JxlEncoderSetFrameDistance(frameSettings, compressionDistance)) {
             return false;
         }

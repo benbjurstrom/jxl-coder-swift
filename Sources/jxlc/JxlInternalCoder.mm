@@ -50,7 +50,7 @@ static inline float JXLGetDistance(int quality)
 }
 
 static inline JxlCompressionOption toJxlCompressionOption(JXLCompressionOption opt) {
-    return (opt == kLoseless) ? loseless : loosy;
+    return (opt == kLossless) ? lossless : lossy;
 }
 
 @implementation JxlInternalCoder
@@ -97,11 +97,11 @@ static inline JxlCompressionOption toJxlCompressionOption(JXLCompressionOption o
         }
 
         switch (compressionOption) {
-            case kLoseless:
-                jCompressionOption = loseless;
+            case kLossless:
+                jCompressionOption = lossless;
                 break;
             case kLossy:
-                jCompressionOption = loosy;
+                jCompressionOption = lossy;
                 break;
         }
 

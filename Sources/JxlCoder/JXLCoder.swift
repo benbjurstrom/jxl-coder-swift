@@ -178,7 +178,7 @@ public class JXLCoder {
     /// - Throws: If encoding fails
     public static func encodeHDR(
         image: JXLPlatformImage,
-        compressionOption: JXLCompressionOption = .loseless,
+        compressionOption: JXLCompressionOption = .lossless,
         effort: Int = 7,
         quality: Int = 0,
         decodingSpeed: JXLEncoderDecodingSpeed = .slowest

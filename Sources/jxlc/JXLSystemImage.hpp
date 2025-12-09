@@ -62,7 +62,7 @@ typedef NS_ENUM(NSInteger, JXLColorSpace)  {
 };
 
 typedef NS_ENUM(NSInteger, JXLCompressionOption) {
-    kLoseless NS_SWIFT_NAME(loseless),
+    kLossless NS_SWIFT_NAME(lossless),
     kLossy NS_SWIFT_NAME(lossy)
 };
 

@@ -88,7 +88,7 @@ public:
         basicInfo.xsize = width;
         basicInfo.ysize = height;
         basicInfo.bits_per_sample = 8;
-        basicInfo.uses_original_profile = compressionOption == loosy ? JXL_FALSE : JXL_TRUE;
+        basicInfo.uses_original_profile = compressionOption == lossy ? JXL_FALSE : JXL_TRUE;
         basicInfo.num_color_channels = 3;
 
         basicInfo.animation.tps_numerator = 1000;
@@ -155,8 +155,8 @@ public:
             throw AnimatedEncoderError(str);
         }
 
-        if (JXL_ENC_SUCCESS != JxlEncoderSetFrameLossless(frameSettings, compressionOption == loseless)) {
-            std::string str = "Set frame to loseless has failed";
+        if (JXL_ENC_SUCCESS != JxlEncoderSetFrameLossless(frameSettings, compressionOption == lossless)) {
+            std::string str = "Set frame to lossless has failed";
             throw AnimatedEncoderError(str);
         }
 

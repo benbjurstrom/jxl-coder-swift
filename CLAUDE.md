@@ -46,7 +46,7 @@ pod install
 ### Key Types
 
 - `JXLColorSpace`: `.rgb`, `.rgba`
-- `JXLCompressionOption`: `.lossy`, `.loseless` (note: typo in original, kept for compatibility)
+- `JXLCompressionOption`: `.lossy`, `.lossless`
 - `JXLPreferredPixelFormat`: `.optimal`, `.r8`, `.r16`
 - `JXLEncoderDecodingSpeed`: Controls decode speed vs size tradeoff
 - `JXLImageInfo`: Struct carrying image metadata (width, height, bitsPerComponent, isFloat, etc.)
