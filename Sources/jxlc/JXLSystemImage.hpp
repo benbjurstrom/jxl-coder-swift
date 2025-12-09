@@ -47,8 +47,9 @@
 typedef struct {
     int width;
     int height;
-    int bitsPerComponent;      // 8, 10, 16, or 32
+    int bitsPerComponent;      // Container size: 8, 16, or 32 (after unpacking)
     int bitsPerPixel;          // total bits (e.g., 64 for RGBA16)
+    int originalBitsPerComponent; // Original precision (e.g., 10 for packed 10-bit)
     bool isFloat;              // true for float16/float32
     bool hasAlpha;
     bool alphaPremultiplied;

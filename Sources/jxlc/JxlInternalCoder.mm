@@ -425,7 +425,8 @@ static inline JxlCompressionOption toJxlCompressionOption(JXLCompressionOption o
             info.width, info.height,
             &wrapper->data,
             numChannels,
-            info.bitsPerComponent,
+            info.bitsPerComponent,         // Container size (8, 16, 32)
+            info.originalBitsPerComponent, // Original precision (e.g., 10 for better compression)
             info.isFloat,
             iccProfile.empty() ? nullptr : &iccProfile,
             toJxlCompressionOption(compressionOption),

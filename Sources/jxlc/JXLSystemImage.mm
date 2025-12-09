@@ -63,6 +63,7 @@
     info->height = (int)CGImageGetHeight(imageRef);
     info->bitsPerComponent = (int)CGImageGetBitsPerComponent(imageRef);
     info->bitsPerPixel = (int)CGImageGetBitsPerPixel(imageRef);
+    info->originalBitsPerComponent = info->bitsPerComponent;  // Will be updated if unpacking occurs
 
     CGBitmapInfo bitmapInfo = CGImageGetBitmapInfo(imageRef);
     info->isFloat = (bitmapInfo & kCGBitmapFloatComponents) != 0;
@@ -446,10 +447,11 @@ static void unpackPacked10BitToRGB16(const uint32_t* src, uint16_t* dst, size_t 
     // Handle packed 10-bit format specially
     if (info->isPacked10Bit) {
         // Packed 10-bit: 32 bits per pixel containing 3x10-bit RGB + 2-bit padding
-        // Output as 16-bit RGB (no alpha in this format)
-        info->bitsPerComponent = 16;  // Update to output bit depth
-        info->hasAlpha = false;       // Packed 10-bit has no real alpha
-        buffer.resize(pixelCount * 3 * 2);  // 3 channels * 16-bit
+        // Output as 16-bit RGB container, but preserve original 10-bit precision info
+        info->originalBitsPerComponent = 10;  // Preserve original precision for encoder
+        info->bitsPerComponent = 16;          // Container size after unpacking
+        info->hasAlpha = false;               // Packed 10-bit has no real alpha
+        buffer.resize(pixelCount * 3 * 2);    // 3 channels * 16-bit
 
         unpackPacked10BitToRGB16(
             (const uint32_t*)srcBuffer.data(),

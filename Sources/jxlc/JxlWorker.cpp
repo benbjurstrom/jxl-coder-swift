@@ -374,7 +374,8 @@ bool EncodeJxlHDR(
     uint32_t xsize, uint32_t ysize,
     std::vector<uint8_t>* compressed,
     int numChannels,
-    int bitsPerSample,
+    int containerBitsPerSample,    // Container size: 8, 16, 32
+    int originalBitsPerSample,     // Original precision for better compression
     bool isFloat,
     const std::vector<uint8_t>* iccProfile,
     JxlCompressionOption compressionOption,
@@ -391,17 +392,18 @@ bool EncodeJxlHDR(
         return false;
     }
 
-    // Basic info - preserve original bit depth
+    // Basic info - use original bit depth for better compression
+    // e.g., 10-bit data in 16-bit container: tell encoder only 10 bits are significant
     JxlBasicInfo basicInfo;
     JxlEncoderInitBasicInfo(&basicInfo);
     basicInfo.xsize = xsize;
     basicInfo.ysize = ysize;
     basicInfo.num_color_channels = 3;
-    basicInfo.bits_per_sample = bitsPerSample;
+    basicInfo.bits_per_sample = originalBitsPerSample;  // Use original precision
 
     // For float formats, set exponent bits (float16 = 5, float32 = 8)
     if (isFloat) {
-        basicInfo.exponent_bits_per_sample = (bitsPerSample == 16) ? 5 : 8;
+        basicInfo.exponent_bits_per_sample = (containerBitsPerSample == 16) ? 5 : 8;
     } else {
         basicInfo.exponent_bits_per_sample = 0;
     }
@@ -411,7 +413,7 @@ bool EncodeJxlHDR(
 
     if (numChannels == 4) {
         basicInfo.num_extra_channels = 1;
-        basicInfo.alpha_bits = bitsPerSample;
+        basicInfo.alpha_bits = originalBitsPerSample;
         basicInfo.alpha_exponent_bits = isFloat ? basicInfo.exponent_bits_per_sample : 0;
     }
 
@@ -423,7 +425,7 @@ bool EncodeJxlHDR(
     if (numChannels == 4) {
         JxlExtraChannelInfo channelInfo;
         JxlEncoderInitExtraChannelInfo(JXL_CHANNEL_ALPHA, &channelInfo);
-        channelInfo.bits_per_sample = bitsPerSample;
+        channelInfo.bits_per_sample = originalBitsPerSample;
         channelInfo.exponent_bits_per_sample = isFloat ? basicInfo.exponent_bits_per_sample : 0;
         channelInfo.alpha_premultiplied = JXL_FALSE;
         if (JXL_ENC_SUCCESS != JxlEncoderSetExtraChannelInfo(enc.get(), 0, &channelInfo)) {
@@ -451,9 +453,10 @@ bool EncodeJxlHDR(
     JxlEncoderFrameSettings* frameSettings =
         JxlEncoderFrameSettingsCreate(enc.get(), nullptr);
 
-    // Bit depth setting
+    // Bit depth setting - use original precision for compression efficiency
+    // This tells the encoder that e.g. 10-bit data is stored in 16-bit container
     JxlBitDepth depth;
-    depth.bits_per_sample = bitsPerSample;
+    depth.bits_per_sample = originalBitsPerSample;
     depth.exponent_bits_per_sample = isFloat ? basicInfo.exponent_bits_per_sample : 0;
     depth.type = JXL_BIT_DEPTH_FROM_PIXEL_FORMAT;
     if (JXL_ENC_SUCCESS != JxlEncoderSetFrameBitDepth(frameSettings, &depth)) {
@@ -491,12 +494,12 @@ bool EncodeJxlHDR(
         }
     }
 
-    // Pixel format - match input bit depth and type
+    // Pixel format - use container size (actual data layout in memory)
     JxlDataType dataType;
     if (isFloat) {
-        dataType = (bitsPerSample == 16) ? JXL_TYPE_FLOAT16 : JXL_TYPE_FLOAT;
+        dataType = (containerBitsPerSample == 16) ? JXL_TYPE_FLOAT16 : JXL_TYPE_FLOAT;
     } else {
-        dataType = (bitsPerSample <= 8) ? JXL_TYPE_UINT8 : JXL_TYPE_UINT16;
+        dataType = (containerBitsPerSample <= 8) ? JXL_TYPE_UINT8 : JXL_TYPE_UINT16;
     }
 
     JxlPixelFormat pixel_format = {

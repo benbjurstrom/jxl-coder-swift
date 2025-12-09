@@ -58,7 +58,8 @@ bool EncodeJxlHDR(
     uint32_t xsize, uint32_t ysize,
     std::vector<uint8_t>* compressed,
     int numChannels,                         // 3 or 4
-    int bitsPerSample,                       // 8, 10, 12, 16
+    int containerBitsPerSample,              // Container size: 8, 16, 32
+    int originalBitsPerSample,               // Original precision: 8, 10, 12, 16 (for better compression)
     bool isFloat,                            // true for float16/float32
     const std::vector<uint8_t>* iccProfile,  // can be nullptr for sRGB fallback
     JxlCompressionOption compressionOption,
