@@ -81,6 +81,10 @@
     info->byteOrderLittle = (byteOrder == kCGBitmapByteOrder16Little ||
                              byteOrder == kCGBitmapByteOrder32Little);
 
+    // Detect packed 10-bit format: 10 bits per component, 32 bits per pixel = 3 components packed
+    // Common formats: ARGB2101010 (2-bit alpha + 3x10-bit RGB) or RGBX1010102
+    info->isPacked10Bit = (info->bitsPerComponent == 10 && info->bitsPerPixel == 32);
+
     return true;
 }
 
@@ -117,28 +121,66 @@ static void convertToRGBA8(uint8_t* data, size_t pixelCount, bool alphaFirst, bo
     }
 }
 
-// Convert any 4-channel 16-bit format to RGBA order
-static void convertToRGBA16(uint16_t* data, size_t pixelCount, bool alphaFirst, bool littleEndian, bool hasAlpha) {
+// Float16 1.0 representation (IEEE 754 half-precision)
+static const uint16_t FLOAT16_ONE = 0x3C00;
+
+// Convert any 4-channel 16-bit integer format to RGBA order
+// NOTE: For 16-bit formats, byteOrder16Little affects component endianness, NOT channel order.
+// On little-endian systems (all modern Macs), 16Little is native - no byte swapping needed.
+// Channel order is determined solely by alphaFirst (premultipliedFirst/First vs premultipliedLast/Last).
+static void convertToRGBA16_int(uint16_t* data, size_t pixelCount, bool alphaFirst, bool hasAlpha) {
+    // If alpha is last (premultipliedLast, last, noneSkipLast), format is already RGBA - only fix alpha if needed
+    if (!alphaFirst) {
+        if (!hasAlpha) {
+            // Just set alpha to opaque (integer max)
+            for (size_t i = 0; i < pixelCount; i++) {
+                data[i * 4 + 3] = 65535;
+            }
+        }
+        // Otherwise data is already RGBA with valid alpha
+        return;
+    }
+
+    // Alpha is first (premultipliedFirst, first, noneSkipFirst) - need to rotate ARGB -> RGBA
     for (size_t i = 0; i < pixelCount; i++) {
         uint16_t* p = data + i * 4;
-        uint16_t r, g, b, a;
+        uint16_t a = p[0];
+        uint16_t r = p[1];
+        uint16_t g = p[2];
+        uint16_t b = p[3];
 
-        if (alphaFirst && littleEndian) {
-            // Memory: B,G,R,A
-            b = p[0]; g = p[1]; r = p[2]; a = p[3];
-        } else if (alphaFirst && !littleEndian) {
-            // Memory: A,R,G,B
-            a = p[0]; r = p[1]; g = p[2]; b = p[3];
-        } else if (!alphaFirst && littleEndian) {
-            // Memory: A,B,G,R
-            a = p[0]; b = p[1]; g = p[2]; r = p[3];
-        } else {
-            // Memory: R,G,B,A
-            r = p[0]; g = p[1]; b = p[2]; a = p[3];
-        }
-
-        p[0] = r; p[1] = g; p[2] = b;
+        p[0] = r;
+        p[1] = g;
+        p[2] = b;
         p[3] = hasAlpha ? a : 65535;
+    }
+}
+
+// Convert any 4-channel float16 format to RGBA order
+static void convertToRGBA16_float(uint16_t* data, size_t pixelCount, bool alphaFirst, bool hasAlpha) {
+    // If alpha is last, format is already RGBA - only fix alpha if needed
+    if (!alphaFirst) {
+        if (!hasAlpha) {
+            // Set alpha to opaque (float16 1.0)
+            for (size_t i = 0; i < pixelCount; i++) {
+                data[i * 4 + 3] = FLOAT16_ONE;
+            }
+        }
+        return;
+    }
+
+    // Alpha is first - need to rotate ARGB -> RGBA
+    for (size_t i = 0; i < pixelCount; i++) {
+        uint16_t* p = data + i * 4;
+        uint16_t a = p[0];
+        uint16_t r = p[1];
+        uint16_t g = p[2];
+        uint16_t b = p[3];
+
+        p[0] = r;
+        p[1] = g;
+        p[2] = b;
+        p[3] = hasAlpha ? a : FLOAT16_ONE;
     }
 }
 
@@ -156,8 +198,8 @@ static void unpremultiplyRGBA8(uint8_t* data, size_t pixelCount) {
     }
 }
 
-// Unpremultiply 16-bit RGBA (after conversion to RGBA order)
-static void unpremultiplyRGBA16(uint16_t* data, size_t pixelCount) {
+// Unpremultiply 16-bit integer RGBA (after conversion to RGBA order)
+static void unpremultiplyRGBA16_int(uint16_t* data, size_t pixelCount) {
     for (size_t i = 0; i < pixelCount; i++) {
         uint16_t* p = data + i * 4;
         uint16_t a = p[3];
@@ -166,6 +208,76 @@ static void unpremultiplyRGBA16(uint16_t* data, size_t pixelCount) {
             p[0] = std::min(65535, (int)(p[0] * scale));
             p[1] = std::min(65535, (int)(p[1] * scale));
             p[2] = std::min(65535, (int)(p[2] * scale));
+        }
+    }
+}
+
+// Helper to convert float16 to float32
+static inline float float16ToFloat32(uint16_t h) {
+    uint32_t sign = (h & 0x8000) << 16;
+    uint32_t exponent = (h >> 10) & 0x1F;
+    uint32_t mantissa = h & 0x3FF;
+
+    if (exponent == 0) {
+        if (mantissa == 0) {
+            // Zero
+            uint32_t result = sign;
+            return *reinterpret_cast<float*>(&result);
+        } else {
+            // Subnormal - normalize
+            while ((mantissa & 0x400) == 0) {
+                mantissa <<= 1;
+                exponent--;
+            }
+            exponent++;
+            mantissa &= ~0x400;
+        }
+    } else if (exponent == 31) {
+        // Inf or NaN
+        uint32_t result = sign | 0x7F800000 | (mantissa << 13);
+        return *reinterpret_cast<float*>(&result);
+    }
+
+    exponent = exponent + (127 - 15);
+    uint32_t result = sign | (exponent << 23) | (mantissa << 13);
+    return *reinterpret_cast<float*>(&result);
+}
+
+// Helper to convert float32 to float16
+static inline uint16_t float32ToFloat16(float f) {
+    uint32_t bits = *reinterpret_cast<uint32_t*>(&f);
+    uint32_t sign = (bits >> 16) & 0x8000;
+    int32_t exponent = ((bits >> 23) & 0xFF) - 127 + 15;
+    uint32_t mantissa = bits & 0x7FFFFF;
+
+    if (exponent <= 0) {
+        if (exponent < -10) {
+            return sign; // Zero
+        }
+        mantissa = (mantissa | 0x800000) >> (1 - exponent);
+        return sign | (mantissa >> 13);
+    } else if (exponent >= 31) {
+        return sign | 0x7C00; // Inf
+    }
+
+    return sign | (exponent << 10) | (mantissa >> 13);
+}
+
+// Unpremultiply float16 RGBA manually (no vImage function for half-float)
+static void unpremultiplyRGBA_float16(uint16_t* data, int width, int height) {
+    size_t pixelCount = (size_t)width * height;
+    for (size_t i = 0; i < pixelCount; i++) {
+        uint16_t* p = data + i * 4;
+        float a = float16ToFloat32(p[3]);
+
+        if (a > 0.0f && a < 1.0f) {
+            float r = float16ToFloat32(p[0]);
+            float g = float16ToFloat32(p[1]);
+            float b = float16ToFloat32(p[2]);
+
+            p[0] = float32ToFloat16(r / a);
+            p[1] = float32ToFloat16(g / a);
+            p[2] = float32ToFloat16(b / a);
         }
     }
 }
@@ -182,7 +294,7 @@ static void grayscaleToRGB8(const uint8_t* src, uint8_t* dst, size_t pixelCount,
     }
 }
 
-static void grayscaleToRGB16(const uint16_t* src, uint16_t* dst, size_t pixelCount, int srcChannels, bool hasAlpha) {
+static void grayscaleToRGB16_int(const uint16_t* src, uint16_t* dst, size_t pixelCount, int srcChannels, bool hasAlpha) {
     for (size_t i = 0; i < pixelCount; i++) {
         uint16_t gray = src[i * srcChannels];
         uint16_t alpha = (srcChannels == 2) ? src[i * srcChannels + 1] : 65535;
@@ -190,6 +302,17 @@ static void grayscaleToRGB16(const uint16_t* src, uint16_t* dst, size_t pixelCou
         dst[i * 4 + 1] = gray;
         dst[i * 4 + 2] = gray;
         dst[i * 4 + 3] = hasAlpha ? alpha : 65535;
+    }
+}
+
+static void grayscaleToRGB16_float(const uint16_t* src, uint16_t* dst, size_t pixelCount, int srcChannels, bool hasAlpha) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        uint16_t gray = src[i * srcChannels];
+        uint16_t alpha = (srcChannels == 2) ? src[i * srcChannels + 1] : FLOAT16_ONE;
+        dst[i * 4 + 0] = gray;
+        dst[i * 4 + 1] = gray;
+        dst[i * 4 + 2] = gray;
+        dst[i * 4 + 3] = hasAlpha ? alpha : FLOAT16_ONE;
     }
 }
 
@@ -207,6 +330,54 @@ static void stripAlpha16(const uint16_t* src, uint16_t* dst, size_t pixelCount) 
         dst[i * 3 + 0] = src[i * 4 + 0];
         dst[i * 3 + 1] = src[i * 4 + 1];
         dst[i * 3 + 2] = src[i * 4 + 2];
+    }
+}
+
+// Unpack ARGB2101010 / RGBX1010102 packed 10-bit format to 16-bit RGB
+// Packed format on little-endian: 32-bit word where bits are arranged as:
+//   For noneSkipFirst (XRGB): 2-bit padding, 10-bit R, 10-bit G, 10-bit B (from high to low)
+//   For noneSkipLast (RGBX):  10-bit R, 10-bit G, 10-bit B, 2-bit padding
+// The 10-bit values are scaled to 16-bit by shifting left by 6 (equivalent to *64 + some interpolation)
+static void unpackPacked10BitToRGB16(const uint32_t* src, uint16_t* dst, size_t pixelCount,
+                                      bool alphaFirst, bool littleEndian) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        uint32_t pixel = src[i];
+
+        // On little-endian system reading a 32Little value, the bytes are already in native order
+        // For big-endian byte order, we'd need to swap
+        if (!littleEndian) {
+            pixel = ((pixel & 0xFF) << 24) | ((pixel & 0xFF00) << 8) |
+                    ((pixel >> 8) & 0xFF00) | ((pixel >> 24) & 0xFF);
+        }
+
+        uint16_t r, g, b;
+
+        if (alphaFirst) {
+            // XRGB2101010: [XX RRRRRRRRRR GGGGGGGGGG BBBBBBBBBB] from bit 31 to bit 0
+            // XX = bits 31-30 (padding/alpha)
+            // R  = bits 29-20
+            // G  = bits 19-10
+            // B  = bits 9-0
+            r = (pixel >> 20) & 0x3FF;
+            g = (pixel >> 10) & 0x3FF;
+            b = pixel & 0x3FF;
+        } else {
+            // RGBX1010102: [RRRRRRRRRR GGGGGGGGGG BBBBBBBBBB XX] from bit 31 to bit 0
+            // R  = bits 31-22
+            // G  = bits 21-12
+            // B  = bits 11-2
+            // XX = bits 1-0 (padding/alpha)
+            r = (pixel >> 22) & 0x3FF;
+            g = (pixel >> 12) & 0x3FF;
+            b = (pixel >> 2) & 0x3FF;
+        }
+
+        // Scale 10-bit (0-1023) to 16-bit (0-65535)
+        // Optimal scaling: val * 65535 / 1023 ≈ val * 64 + val / 16
+        // Simpler approximation: (val << 6) | (val >> 4)
+        dst[i * 3 + 0] = (r << 6) | (r >> 4);
+        dst[i * 3 + 1] = (g << 6) | (g >> 4);
+        dst[i * 3 + 2] = (b << 6) | (b >> 4);
     }
 }
 
@@ -272,6 +443,26 @@ static void stripAlpha16(const uint16_t* src, uint16_t* dst, size_t pixelCount) 
 
     CFRelease(pixelData);
 
+    // Handle packed 10-bit format specially
+    if (info->isPacked10Bit) {
+        // Packed 10-bit: 32 bits per pixel containing 3x10-bit RGB + 2-bit padding
+        // Output as 16-bit RGB (no alpha in this format)
+        info->bitsPerComponent = 16;  // Update to output bit depth
+        info->hasAlpha = false;       // Packed 10-bit has no real alpha
+        buffer.resize(pixelCount * 3 * 2);  // 3 channels * 16-bit
+
+        unpackPacked10BitToRGB16(
+            (const uint32_t*)srcBuffer.data(),
+            (uint16_t*)buffer.data(),
+            pixelCount,
+            info->alphaFirst,
+            info->byteOrderLittle
+        );
+
+        info->bitsPerPixel = 48;  // 3 * 16
+        return true;
+    }
+
     // Process based on source channel count
     if (srcChannels == 1 || srcChannels == 2) {
         // Grayscale or Grayscale+Alpha -> expand to RGB/RGBA
@@ -286,7 +477,11 @@ static void stripAlpha16(const uint16_t* src, uint16_t* dst, size_t pixelCount) 
             }
         } else if (info->bitsPerComponent == 16) {
             std::vector<uint16_t> rgbaBuffer(pixelCount * 4);
-            grayscaleToRGB16((uint16_t*)srcBuffer.data(), rgbaBuffer.data(), pixelCount, srcChannels, info->hasAlpha);
+            if (info->isFloat) {
+                grayscaleToRGB16_float((uint16_t*)srcBuffer.data(), rgbaBuffer.data(), pixelCount, srcChannels, info->hasAlpha);
+            } else {
+                grayscaleToRGB16_int((uint16_t*)srcBuffer.data(), rgbaBuffer.data(), pixelCount, srcChannels, info->hasAlpha);
+            }
             if (info->hasAlpha) {
                 memcpy(buffer.data(), rgbaBuffer.data(), pixelCount * 4 * 2);
             } else {
@@ -315,10 +510,20 @@ static void stripAlpha16(const uint16_t* src, uint16_t* dst, size_t pixelCount) 
                 stripAlpha8(srcBuffer.data(), buffer.data(), pixelCount);
             }
         } else if (info->bitsPerComponent == 16) {
-            convertToRGBA16((uint16_t*)srcBuffer.data(), pixelCount, info->alphaFirst, info->byteOrderLittle, info->hasAlpha);
+            if (info->isFloat) {
+                // Float16 data
+                convertToRGBA16_float((uint16_t*)srcBuffer.data(), pixelCount, info->alphaFirst, info->hasAlpha);
 
-            if (info->alphaPremultiplied && info->hasAlpha) {
-                unpremultiplyRGBA16((uint16_t*)srcBuffer.data(), pixelCount);
+                if (info->alphaPremultiplied && info->hasAlpha) {
+                    unpremultiplyRGBA_float16((uint16_t*)srcBuffer.data(), info->width, info->height);
+                }
+            } else {
+                // Integer 16-bit data
+                convertToRGBA16_int((uint16_t*)srcBuffer.data(), pixelCount, info->alphaFirst, info->hasAlpha);
+
+                if (info->alphaPremultiplied && info->hasAlpha) {
+                    unpremultiplyRGBA16_int((uint16_t*)srcBuffer.data(), pixelCount);
+                }
             }
 
             if (info->hasAlpha) {

@@ -47,13 +47,14 @@
 typedef struct {
     int width;
     int height;
-    int bitsPerComponent;      // 8, 16, or 32
+    int bitsPerComponent;      // 8, 10, 16, or 32
     int bitsPerPixel;          // total bits (e.g., 64 for RGBA16)
     bool isFloat;              // true for float16/float32
     bool hasAlpha;
     bool alphaPremultiplied;
     bool alphaFirst;           // ARGB vs RGBA
     bool byteOrderLittle;      // byte order for 16/32 bit
+    bool isPacked10Bit;        // true for ARGB2101010/RGBX1010102 packed formats
 } JXLImageInfo;
 
 typedef NS_ENUM(NSInteger, JXLColorSpace)  {
