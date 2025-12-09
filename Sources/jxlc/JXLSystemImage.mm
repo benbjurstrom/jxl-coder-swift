@@ -120,14 +120,17 @@
                 }
 
                 // Check for color primaries from name
-                if (CFStringFind(name, CFSTR("2020"), 0).location != kCFNotFound ||
-                    CFStringFind(name, CFSTR("2100"), 0).location != kCFNotFound) {
-                    info->colorPrimaries = kPrimariesBT2020;
+                // Note: ITUR_2100 refers to the transfer function spec, not primaries.
+                // The actual primaries could be BT.2020, P3, or even sRGB with PQ/HLG transfer.
+                // We DON'T assume primaries from "2100" - need ICC profile or API detection.
+                if (CFStringFind(name, CFSTR("P3"), 0).location != kCFNotFound ||
+                    CFStringFind(name, CFSTR("DisplayP3"), 0).location != kCFNotFound) {
+                    info->colorPrimaries = kPrimariesDisplayP3;
                     detectedFromName = true;
                 }
-                else if (CFStringFind(name, CFSTR("P3"), 0).location != kCFNotFound ||
-                         CFStringFind(name, CFSTR("DisplayP3"), 0).location != kCFNotFound) {
-                    info->colorPrimaries = kPrimariesDisplayP3;
+                else if (CFStringFind(name, CFSTR("2020"), 0).location != kCFNotFound) {
+                    // Only BT.2020 explicitly mentioned - NOT 2100 which is just transfer function
+                    info->colorPrimaries = kPrimariesBT2020;
                     detectedFromName = true;
                 }
             }
@@ -135,44 +138,63 @@
             CFRelease(name);
         }
 
-        // If name-based detection failed (NULL, "unnamed", or unrecognized),
-        // use CGColorSpace API functions to detect HDR characteristics
-        if (!detectedFromName) {
-            // Use CGColorSpace API functions for detection
-            // These provide accurate information even for "unnamed" color spaces
+        // Use CGColorSpace API functions for additional detection
+        // These provide accurate info even when name-based detection is incomplete
 
-            // Check for BT.2100 transfer function (PQ or HLG) - macOS 11.0+, iOS 14.0+
+        // If transfer function not yet detected, check for BT.2100 TF
+        if (info->transferFunction == kTransferSRGB) {
             if (@available(macOS 11.0, iOS 14.0, *)) {
                 if (CGColorSpaceUsesITUR_2100TF(colorSpace)) {
-                    // BT.2100 uses either PQ or HLG - default to PQ as it's more common
-                    // for HDR photo capture. HLG is typically used for broadcast.
+                    // BT.2100 uses either PQ or HLG - default to PQ
                     info->transferFunction = kTransferPQ;
-                    // BT.2100 always uses BT.2020 primaries
-                    info->colorPrimaries = kPrimariesBT2020;
-                    detectedFromName = true;  // Mark as detected
                 }
             }
+        }
 
-            // Additional detection if still not identified - macOS 10.15+, iOS 13.0+
-            if (!detectedFromName) {
-                if (@available(macOS 10.15, iOS 13.0, *)) {
-                    if (CGColorSpaceIsHDR(colorSpace)) {
-                        // HDR but not BT.2100 - could be extended range Display P3 or similar
-                        // Keep sRGB transfer but note it's HDR (extended range)
-                        // For wide gamut HDR, check primaries
-                        if (@available(macOS 10.12, iOS 10.0, *)) {
-                            if (CGColorSpaceIsWideGamutRGB(colorSpace)) {
-                                info->colorPrimaries = kPrimariesDisplayP3;
-                            }
-                        }
+        // Detect primaries using API if not yet determined or still at default
+        // This is critical because ITUR_2100_PQ can have P3 OR BT.2020 primaries
+        if (info->colorPrimaries == kPrimariesSRGB) {
+            if (@available(macOS 10.12, iOS 10.0, *)) {
+                if (CGColorSpaceIsWideGamutRGB(colorSpace)) {
+                    // Wide gamut - but is it P3 or BT.2020?
+                    // Try to compare against known color spaces
+                    CGColorSpaceRef displayP3 = CGColorSpaceCreateWithName(kCGColorSpaceDisplayP3);
+                    CGColorSpaceRef p3Linear = CGColorSpaceCreateWithName(kCGColorSpaceLinearDisplayP3);
+                    CGColorSpaceRef bt2020Linear = NULL;
+                    CGColorSpaceRef bt2020PQ = NULL;
+
+                    if (@available(macOS 11.0, iOS 14.0, *)) {
+                        bt2020Linear = CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearITUR_2020);
+                        bt2020PQ = CGColorSpaceCreateWithName(kCGColorSpaceITUR_2100_PQ);
                     }
-                }
 
-                // Check for wide gamut without HDR - macOS 10.12+, iOS 10.0+
+                    // Check if it matches BT.2020 explicitly
+                    bool isBT2020 = false;
+                    if (bt2020Linear && CFEqual(colorSpace, bt2020Linear)) isBT2020 = true;
+                    // Note: Can't compare against bt2020PQ since that's what we might have
+
+                    if (isBT2020) {
+                        info->colorPrimaries = kPrimariesBT2020;
+                    } else {
+                        // Wide gamut but not BT.2020 - assume Display P3
+                        // This is the most common case for iPhone HDR photos
+                        info->colorPrimaries = kPrimariesDisplayP3;
+                    }
+
+                    if (displayP3) CGColorSpaceRelease(displayP3);
+                    if (p3Linear) CGColorSpaceRelease(p3Linear);
+                    if (bt2020Linear) CGColorSpaceRelease(bt2020Linear);
+                    if (bt2020PQ) CGColorSpaceRelease(bt2020PQ);
+                }
+            }
+        }
+
+        // Final fallback for HDR content
+        if (@available(macOS 10.15, iOS 13.0, *)) {
+            if (CGColorSpaceIsHDR(colorSpace) && info->colorPrimaries == kPrimariesSRGB) {
+                // HDR content with sRGB primaries detected - check wide gamut
                 if (@available(macOS 10.12, iOS 10.0, *)) {
-                    if (CGColorSpaceIsWideGamutRGB(colorSpace) &&
-                        info->colorPrimaries == kPrimariesSRGB) {
-                        // Wide gamut but not detected as HDR - likely Display P3
+                    if (CGColorSpaceIsWideGamutRGB(colorSpace)) {
                         info->colorPrimaries = kPrimariesDisplayP3;
                     }
                 }
