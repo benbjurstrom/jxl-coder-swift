@@ -427,27 +427,30 @@ bool EncodeJxlHDR(
     }
 
     // COLOR ENCODING - critical for HDR preservation
-    // Try ICC profile first, then fall back to color encoding
+    // For lossless: try ICC profile first (preserves exact color space)
+    // For lossy: use JxlColorEncoding (ICC causes issues with lossy, per Krita findings)
     bool iccProfileAccepted = false;
 
-    if (hasValidIccProfile) {
-        // Set basic info first with uses_original_profile = TRUE (required for ICC)
+    if (compressionOption == lossless && hasValidIccProfile) {
+        // Lossless with ICC profile - use original profile for exact color preservation
+        basicInfo.uses_original_profile = JXL_TRUE;
         if (JXL_ENC_SUCCESS != JxlEncoderSetBasicInfo(enc.get(), &basicInfo)) {
             return false;
         }
 
-        // Try to use ICC profile - preserves HDR color space (BT.2020, Display P3, etc.)
+        // Try to set ICC profile
         if (JXL_ENC_SUCCESS == JxlEncoderSetICCProfile(
                 enc.get(), iccProfile->data(), iccProfile->size())) {
             iccProfileAccepted = true;
         }
-        // If ICC profile fails, we need to reset basic info with uses_original_profile = FALSE
-        // and use color encoding instead
+        // If ICC profile fails, fall through to use color encoding
     }
 
     if (!iccProfileAccepted) {
-        // ICC profile was rejected or not provided
-        // Reset uses_original_profile to FALSE since we're using color encoding, not ICC
+        // Lossy encoding OR ICC profile rejected/not provided
+        // Use JxlColorEncoding with detected transfer function and primaries
+        // Note: For lossy, libjxl may mishandle ICC profiles, so we explicitly
+        // use parametric color encoding for correct HDR interpretation
         basicInfo.uses_original_profile = JXL_FALSE;
         if (JXL_ENC_SUCCESS != JxlEncoderSetBasicInfo(enc.get(), &basicInfo)) {
             return false;
