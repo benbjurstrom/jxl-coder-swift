@@ -84,41 +84,80 @@
     return true;
 }
 
-// Helper: swap channels for BGRA->RGBA or ARGB->RGBA
-static void normalizePixelOrder8(uint8_t* data, size_t pixelCount, bool alphaFirst, bool bgrOrder) {
+// Pixel layout in memory based on CGBitmapInfo
+// For 8-bit, 4-channel images:
+//   alphaFirst + bigEndian:    A,R,G,B in memory
+//   alphaFirst + littleEndian: B,G,R,A in memory (most common on iOS/macOS)
+//   alphaLast + bigEndian:     R,G,B,A in memory
+//   alphaLast + littleEndian:  A,B,G,R in memory
+
+// Convert any 4-channel 8-bit format to RGBA order
+static void convertToRGBA8(uint8_t* data, size_t pixelCount, bool alphaFirst, bool littleEndian, bool hasAlpha) {
     for (size_t i = 0; i < pixelCount; i++) {
         uint8_t* p = data + i * 4;
-        if (alphaFirst) {
-            // ARGB -> RGBA
-            uint8_t a = p[0];
-            p[0] = p[1]; p[1] = p[2]; p[2] = p[3]; p[3] = a;
+        uint8_t r, g, b, a;
+
+        if (alphaFirst && littleEndian) {
+            // Memory: B,G,R,A -> extract as BGRA
+            b = p[0]; g = p[1]; r = p[2]; a = p[3];
+        } else if (alphaFirst && !littleEndian) {
+            // Memory: A,R,G,B -> extract as ARGB
+            a = p[0]; r = p[1]; g = p[2]; b = p[3];
+        } else if (!alphaFirst && littleEndian) {
+            // Memory: A,B,G,R -> extract as ABGR
+            a = p[0]; b = p[1]; g = p[2]; r = p[3];
+        } else {
+            // Memory: R,G,B,A -> already RGBA
+            r = p[0]; g = p[1]; b = p[2]; a = p[3];
         }
-        if (bgrOrder) {
-            // BGR(A) -> RGB(A)
-            uint8_t tmp = p[0];
-            p[0] = p[2];
-            p[2] = tmp;
-        }
+
+        // Write as RGBA
+        p[0] = r; p[1] = g; p[2] = b;
+        p[3] = hasAlpha ? a : 255;  // Set opaque if no real alpha
     }
 }
 
-static void normalizePixelOrder16(uint16_t* data, size_t pixelCount, bool alphaFirst, bool bgrOrder) {
+// Convert any 4-channel 16-bit format to RGBA order
+static void convertToRGBA16(uint16_t* data, size_t pixelCount, bool alphaFirst, bool littleEndian, bool hasAlpha) {
     for (size_t i = 0; i < pixelCount; i++) {
         uint16_t* p = data + i * 4;
-        if (alphaFirst) {
-            uint16_t a = p[0];
-            p[0] = p[1]; p[1] = p[2]; p[2] = p[3]; p[3] = a;
+        uint16_t r, g, b, a;
+
+        if (alphaFirst && littleEndian) {
+            // Memory: B,G,R,A
+            b = p[0]; g = p[1]; r = p[2]; a = p[3];
+        } else if (alphaFirst && !littleEndian) {
+            // Memory: A,R,G,B
+            a = p[0]; r = p[1]; g = p[2]; b = p[3];
+        } else if (!alphaFirst && littleEndian) {
+            // Memory: A,B,G,R
+            a = p[0]; b = p[1]; g = p[2]; r = p[3];
+        } else {
+            // Memory: R,G,B,A
+            r = p[0]; g = p[1]; b = p[2]; a = p[3];
         }
-        if (bgrOrder) {
-            uint16_t tmp = p[0];
-            p[0] = p[2];
-            p[2] = tmp;
+
+        p[0] = r; p[1] = g; p[2] = b;
+        p[3] = hasAlpha ? a : 65535;
+    }
+}
+
+// Unpremultiply 8-bit RGBA (after conversion to RGBA order)
+static void unpremultiplyRGBA8(uint8_t* data, size_t pixelCount) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        uint8_t* p = data + i * 4;
+        uint8_t a = p[3];
+        if (a > 0 && a < 255) {
+            float scale = 255.0f / (float)a;
+            p[0] = std::min(255, (int)(p[0] * scale));
+            p[1] = std::min(255, (int)(p[1] * scale));
+            p[2] = std::min(255, (int)(p[2] * scale));
         }
     }
 }
 
-// Helper: unpremultiply alpha
-static void unpremultiply16(uint16_t* data, size_t pixelCount) {
+// Unpremultiply 16-bit RGBA (after conversion to RGBA order)
+static void unpremultiplyRGBA16(uint16_t* data, size_t pixelCount) {
     for (size_t i = 0; i < pixelCount; i++) {
         uint16_t* p = data + i * 4;
         uint16_t a = p[3];
@@ -128,6 +167,46 @@ static void unpremultiply16(uint16_t* data, size_t pixelCount) {
             p[1] = std::min(65535, (int)(p[1] * scale));
             p[2] = std::min(65535, (int)(p[2] * scale));
         }
+    }
+}
+
+// Convert grayscale to RGB by replicating the value
+static void grayscaleToRGB8(const uint8_t* src, uint8_t* dst, size_t pixelCount, int srcChannels, bool hasAlpha) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        uint8_t gray = src[i * srcChannels];
+        uint8_t alpha = (srcChannels == 2) ? src[i * srcChannels + 1] : 255;
+        dst[i * 4 + 0] = gray;
+        dst[i * 4 + 1] = gray;
+        dst[i * 4 + 2] = gray;
+        dst[i * 4 + 3] = hasAlpha ? alpha : 255;
+    }
+}
+
+static void grayscaleToRGB16(const uint16_t* src, uint16_t* dst, size_t pixelCount, int srcChannels, bool hasAlpha) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        uint16_t gray = src[i * srcChannels];
+        uint16_t alpha = (srcChannels == 2) ? src[i * srcChannels + 1] : 65535;
+        dst[i * 4 + 0] = gray;
+        dst[i * 4 + 1] = gray;
+        dst[i * 4 + 2] = gray;
+        dst[i * 4 + 3] = hasAlpha ? alpha : 65535;
+    }
+}
+
+// Strip alpha channel: RGBA -> RGB
+static void stripAlpha8(const uint8_t* src, uint8_t* dst, size_t pixelCount) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        dst[i * 3 + 0] = src[i * 4 + 0];
+        dst[i * 3 + 1] = src[i * 4 + 1];
+        dst[i * 3 + 2] = src[i * 4 + 2];
+    }
+}
+
+static void stripAlpha16(const uint16_t* src, uint16_t* dst, size_t pixelCount) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        dst[i * 3 + 0] = src[i * 4 + 0];
+        dst[i * 3 + 1] = src[i * 4 + 1];
+        dst[i * 3 + 2] = src[i * 4 + 2];
     }
 }
 
@@ -164,47 +243,94 @@ static void unpremultiply16(uint16_t* data, size_t pixelCount) {
     if (!pixelData) return false;
 
     const uint8_t* src = (const uint8_t*)CFDataGetBytePtr(pixelData);
-    size_t dataLen = CFDataGetLength(pixelData);
-
     size_t srcStride = CGImageGetBytesPerRow(imageRef);
-    int bytesPerPixel = info->bitsPerPixel / 8;
-    size_t dstStride = info->width * bytesPerPixel;
+    int srcBytesPerPixel = info->bitsPerPixel / 8;
+    size_t srcRowBytes = info->width * srcBytesPerPixel;
 
-    // Handle stride padding if present
-    if (srcStride == dstStride) {
-        buffer.assign(src, src + dataLen);
+    size_t pixelCount = info->width * info->height;
+    int srcChannels = info->bitsPerPixel / info->bitsPerComponent;
+    int bytesPerComponent = info->bitsPerComponent / 8;
+
+    // We always output RGBA (4 channels) or RGB (3 channels) depending on hasAlpha
+    // For grayscale, we expand to RGB/RGBA
+    int outChannels = info->hasAlpha ? 4 : 3;
+    size_t outBytesPerPixel = outChannels * bytesPerComponent;
+    buffer.resize(pixelCount * outBytesPerPixel);
+
+    // First, copy source data handling stride
+    std::vector<uint8_t> srcBuffer;
+    if (srcStride == srcRowBytes) {
+        srcBuffer.assign(src, src + srcRowBytes * info->height);
     } else {
-        buffer.resize(dstStride * info->height);
+        srcBuffer.resize(srcRowBytes * info->height);
         for (int y = 0; y < info->height; y++) {
-            memcpy(buffer.data() + y * dstStride,
+            memcpy(srcBuffer.data() + y * srcRowBytes,
                    src + y * srcStride,
-                   dstStride);
+                   srcRowBytes);
         }
     }
 
     CFRelease(pixelData);
 
-    // Normalize pixel format to RGBA order
-    size_t pixelCount = info->width * info->height;
-    int numChannels = info->bitsPerPixel / info->bitsPerComponent;
-
-    // Only normalize 4-channel images (with alpha or skip)
-    if (numChannels == 4) {
-        // Detect if we need BGR swap (common on little-endian with 32-bit pixels)
-        bool needsBGRSwap = info->byteOrderLittle && info->bitsPerComponent == 8;
-
+    // Process based on source channel count
+    if (srcChannels == 1 || srcChannels == 2) {
+        // Grayscale or Grayscale+Alpha -> expand to RGB/RGBA
         if (info->bitsPerComponent == 8) {
-            normalizePixelOrder8(buffer.data(), pixelCount, info->alphaFirst, needsBGRSwap);
-            if (info->alphaPremultiplied) {
-                [self unpremultiply:buffer.data() width:info->width height:info->height];
+            // Expand to RGBA first, then strip if needed
+            std::vector<uint8_t> rgbaBuffer(pixelCount * 4);
+            grayscaleToRGB8(srcBuffer.data(), rgbaBuffer.data(), pixelCount, srcChannels, info->hasAlpha);
+            if (info->hasAlpha) {
+                buffer = std::move(rgbaBuffer);
+            } else {
+                stripAlpha8(rgbaBuffer.data(), buffer.data(), pixelCount);
             }
         } else if (info->bitsPerComponent == 16) {
-            normalizePixelOrder16((uint16_t*)buffer.data(), pixelCount, info->alphaFirst, false);
-            if (info->alphaPremultiplied) {
-                unpremultiply16((uint16_t*)buffer.data(), pixelCount);
+            std::vector<uint16_t> rgbaBuffer(pixelCount * 4);
+            grayscaleToRGB16((uint16_t*)srcBuffer.data(), rgbaBuffer.data(), pixelCount, srcChannels, info->hasAlpha);
+            if (info->hasAlpha) {
+                memcpy(buffer.data(), rgbaBuffer.data(), pixelCount * 4 * 2);
+            } else {
+                stripAlpha16(rgbaBuffer.data(), (uint16_t*)buffer.data(), pixelCount);
+            }
+        }
+    } else if (srcChannels == 3) {
+        // RGB without alpha - copy directly
+        buffer = std::move(srcBuffer);
+        // Note: hasAlpha should be false here, outChannels = 3
+    } else if (srcChannels == 4) {
+        // RGBA, BGRA, ARGB, or ABGR -> normalize to RGBA
+        if (info->bitsPerComponent == 8) {
+            // Convert in place to RGBA order
+            convertToRGBA8(srcBuffer.data(), pixelCount, info->alphaFirst, info->byteOrderLittle, info->hasAlpha);
+
+            // Unpremultiply if needed (now that data is in RGBA order)
+            if (info->alphaPremultiplied && info->hasAlpha) {
+                unpremultiplyRGBA8(srcBuffer.data(), pixelCount);
+            }
+
+            if (info->hasAlpha) {
+                buffer = std::move(srcBuffer);
+            } else {
+                // Strip the padding/dummy alpha channel
+                stripAlpha8(srcBuffer.data(), buffer.data(), pixelCount);
+            }
+        } else if (info->bitsPerComponent == 16) {
+            convertToRGBA16((uint16_t*)srcBuffer.data(), pixelCount, info->alphaFirst, info->byteOrderLittle, info->hasAlpha);
+
+            if (info->alphaPremultiplied && info->hasAlpha) {
+                unpremultiplyRGBA16((uint16_t*)srcBuffer.data(), pixelCount);
+            }
+
+            if (info->hasAlpha) {
+                buffer = std::move(srcBuffer);
+            } else {
+                stripAlpha16((uint16_t*)srcBuffer.data(), (uint16_t*)buffer.data(), pixelCount);
             }
         }
     }
+
+    // Update info to reflect output format
+    info->bitsPerPixel = outChannels * info->bitsPerComponent;
 
     return true;
 }

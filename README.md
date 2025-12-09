@@ -17,7 +17,7 @@ The original library only supported 8-bit sRGB encoding, losing HDR data during 
 - **ICC profile passthrough** - maintains color space (BT.2020, Display P3, camera profiles)
 - **Direct pixel extraction** - no redrawing, no precision loss
 - **Lossless mode default** - ideal for archival
-/
+
 | Source Type | Original Library | This Fork |
 |-------------|------------------|-----------|
 | 8-bit JPEG/PNG | 8-bit sRGB | 8-bit + ICC |
