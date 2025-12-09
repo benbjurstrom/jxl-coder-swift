@@ -450,39 +450,46 @@ bool EncodeJxlHDR(
     if (!colorEncodingSet) {
         // No ICC profile or ICC profile rejected - use detected transfer function and primaries
         JxlColorEncoding color_encoding = {};
-        color_encoding.color_space = JXL_COLOR_SPACE_RGB;
-        color_encoding.white_point = JXL_WHITE_POINT_D65;
-        color_encoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
 
-        // Set color primaries
-        switch (colorPrimaries) {
-            case PrimariesBT2020:
-                color_encoding.primaries = JXL_PRIMARIES_2100;  // BT.2020/2100
-                break;
-            case PrimariesDisplayP3:
-                color_encoding.primaries = JXL_PRIMARIES_P3;
-                break;
-            case PrimariesSRGB:
-            default:
-                color_encoding.primaries = JXL_PRIMARIES_SRGB;
-                break;
-        }
+        // For sRGB with sRGB primaries, use the helper function for reliability
+        if (transferFunction == TransferSRGB && colorPrimaries == PrimariesSRGB) {
+            JxlColorEncodingSetToSRGB(&color_encoding, numChannels < 3);
+        } else {
+            // HDR or wide gamut - set up manually
+            color_encoding.color_space = JXL_COLOR_SPACE_RGB;
+            color_encoding.white_point = JXL_WHITE_POINT_D65;
+            color_encoding.rendering_intent = JXL_RENDERING_INTENT_PERCEPTUAL;
 
-        // Set transfer function
-        switch (transferFunction) {
-            case TransferPQ:
-                color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_PQ;
-                break;
-            case TransferHLG:
-                color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_HLG;
-                break;
-            case TransferLinear:
-                color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_LINEAR;
-                break;
-            case TransferSRGB:
-            default:
-                color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
-                break;
+            // Set color primaries
+            switch (colorPrimaries) {
+                case PrimariesBT2020:
+                    color_encoding.primaries = JXL_PRIMARIES_2100;  // BT.2020/2100
+                    break;
+                case PrimariesDisplayP3:
+                    color_encoding.primaries = JXL_PRIMARIES_P3;
+                    break;
+                case PrimariesSRGB:
+                default:
+                    color_encoding.primaries = JXL_PRIMARIES_SRGB;
+                    break;
+            }
+
+            // Set transfer function
+            switch (transferFunction) {
+                case TransferPQ:
+                    color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_PQ;
+                    break;
+                case TransferHLG:
+                    color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_HLG;
+                    break;
+                case TransferLinear:
+                    color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_LINEAR;
+                    break;
+                case TransferSRGB:
+                default:
+                    color_encoding.transfer_function = JXL_TRANSFER_FUNCTION_SRGB;
+                    break;
+            }
         }
 
         if (JXL_ENC_SUCCESS != JxlEncoderSetColorEncoding(enc.get(), &color_encoding)) {
@@ -549,6 +556,15 @@ bool EncodeJxlHDR(
         JXL_NATIVE_ENDIAN,
         0
     };
+
+    // Validate pixel buffer size matches expected
+    size_t bytesPerSample = (containerBitsPerSample <= 8) ? 1 :
+                            (containerBitsPerSample <= 16) ? 2 : 4;
+    size_t expectedSize = static_cast<size_t>(xsize) * ysize * numChannels * bytesPerSample;
+    if (pixels.size() != expectedSize) {
+        // Buffer size mismatch - this would cause encoding to fail
+        return false;
+    }
 
     // Add image frame
     if (JXL_ENC_SUCCESS != JxlEncoderAddImageFrame(
