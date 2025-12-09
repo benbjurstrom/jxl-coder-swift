@@ -410,8 +410,15 @@ bool EncodeJxlHDR(
         basicInfo.exponent_bits_per_sample = 0;
     }
 
-    // For lossless with ICC profile, must use original profile
-    basicInfo.uses_original_profile = (compressionOption == lossless) ? JXL_TRUE : JXL_FALSE;
+    // Determine if we have a valid ICC profile to potentially use
+    bool hasValidIccProfile = (iccProfile && !iccProfile->empty());
+
+    // uses_original_profile should be TRUE only for lossless encoding WITH a valid ICC profile
+    // that will actually be accepted. We'll set it optimistically here if conditions are right,
+    // but we set basic info AFTER attempting ICC profile to ensure correctness.
+    // Note: For lossy encoding, uses_original_profile must be FALSE.
+    bool wantOriginalProfile = (compressionOption == lossless) && hasValidIccProfile;
+    basicInfo.uses_original_profile = wantOriginalProfile ? JXL_TRUE : JXL_FALSE;
 
     if (numChannels == 4) {
         basicInfo.num_extra_channels = 1;
@@ -419,11 +426,35 @@ bool EncodeJxlHDR(
         basicInfo.alpha_exponent_bits = isFloat ? basicInfo.exponent_bits_per_sample : 0;
     }
 
-    if (JXL_ENC_SUCCESS != JxlEncoderSetBasicInfo(enc.get(), &basicInfo)) {
-        return false;
+    // COLOR ENCODING - critical for HDR preservation
+    // Try ICC profile first, then fall back to color encoding
+    bool iccProfileAccepted = false;
+
+    if (hasValidIccProfile) {
+        // Set basic info first with uses_original_profile = TRUE (required for ICC)
+        if (JXL_ENC_SUCCESS != JxlEncoderSetBasicInfo(enc.get(), &basicInfo)) {
+            return false;
+        }
+
+        // Try to use ICC profile - preserves HDR color space (BT.2020, Display P3, etc.)
+        if (JXL_ENC_SUCCESS == JxlEncoderSetICCProfile(
+                enc.get(), iccProfile->data(), iccProfile->size())) {
+            iccProfileAccepted = true;
+        }
+        // If ICC profile fails, we need to reset basic info with uses_original_profile = FALSE
+        // and use color encoding instead
     }
 
-    // Alpha channel info
+    if (!iccProfileAccepted) {
+        // ICC profile was rejected or not provided
+        // Reset uses_original_profile to FALSE since we're using color encoding, not ICC
+        basicInfo.uses_original_profile = JXL_FALSE;
+        if (JXL_ENC_SUCCESS != JxlEncoderSetBasicInfo(enc.get(), &basicInfo)) {
+            return false;
+        }
+    }
+
+    // Alpha channel info (must be set after basic info)
     if (numChannels == 4) {
         JxlExtraChannelInfo channelInfo;
         JxlEncoderInitExtraChannelInfo(JXL_CHANNEL_ALPHA, &channelInfo);
@@ -435,19 +466,7 @@ bool EncodeJxlHDR(
         }
     }
 
-    // COLOR ENCODING - critical for HDR preservation
-    bool colorEncodingSet = false;
-
-    if (iccProfile && !iccProfile->empty()) {
-        // Try to use ICC profile - preserves HDR color space (BT.2020, Display P3, etc.)
-        if (JXL_ENC_SUCCESS == JxlEncoderSetICCProfile(
-                enc.get(), iccProfile->data(), iccProfile->size())) {
-            colorEncodingSet = true;
-        }
-        // If ICC profile fails, fall through to use detected color encoding
-    }
-
-    if (!colorEncodingSet) {
+    if (!iccProfileAccepted) {
         // No ICC profile or ICC profile rejected - use detected transfer function and primaries
         JxlColorEncoding color_encoding = {};
 

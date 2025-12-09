@@ -396,6 +396,124 @@ static void stripAlpha16(const uint16_t* src, uint16_t* dst, size_t pixelCount) 
     }
 }
 
+static void stripAlpha32(const float* src, float* dst, size_t pixelCount) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        dst[i * 3 + 0] = src[i * 4 + 0];
+        dst[i * 3 + 1] = src[i * 4 + 1];
+        dst[i * 3 + 2] = src[i * 4 + 2];
+    }
+}
+
+// Convert any 4-channel float32 format to RGBA order
+static void convertToRGBA32_float(float* data, size_t pixelCount, bool alphaFirst, bool hasAlpha) {
+    if (!alphaFirst) {
+        // Already RGBA order, just fix alpha if needed
+        if (!hasAlpha) {
+            for (size_t i = 0; i < pixelCount; i++) {
+                data[i * 4 + 3] = 1.0f;
+            }
+        }
+        return;
+    }
+
+    // Alpha is first - rotate ARGB -> RGBA
+    for (size_t i = 0; i < pixelCount; i++) {
+        float* p = data + i * 4;
+        float a = p[0];
+        float r = p[1];
+        float g = p[2];
+        float b = p[3];
+
+        p[0] = r;
+        p[1] = g;
+        p[2] = b;
+        p[3] = hasAlpha ? a : 1.0f;
+    }
+}
+
+// Unpremultiply float32 RGBA
+static void unpremultiplyRGBA32_float(float* data, size_t pixelCount) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        float* p = data + i * 4;
+        float a = p[3];
+
+        if (a > 0.0f && a < 1.0f) {
+            p[0] /= a;
+            p[1] /= a;
+            p[2] /= a;
+        }
+    }
+}
+
+// Detect actual bit depth of 16-bit integer data by sampling pixels
+// Returns the detected bit depth (8, 10, 12, 14, or 16)
+// This helps identify 10-bit HEIC/RAW images stored in 16-bit containers
+static int detectActualBitDepth16(const uint16_t* data, size_t pixelCount, int numChannels) {
+    // Sample a subset of pixels for efficiency (up to 10000 samples)
+    size_t sampleCount = std::min(pixelCount, (size_t)10000);
+    size_t step = pixelCount / sampleCount;
+    if (step < 1) step = 1;
+
+    // Track the maximum value found
+    uint16_t maxValue = 0;
+
+    for (size_t i = 0; i < pixelCount; i += step) {
+        for (int c = 0; c < numChannels; c++) {
+            uint16_t val = data[i * numChannels + c];
+            if (val > maxValue) {
+                maxValue = val;
+            }
+        }
+    }
+
+    // Also check for patterns that indicate lower bit depth
+    // 10-bit data scaled to 16-bit: max value around 65472 (1023 << 6)
+    // 12-bit data scaled to 16-bit: max value around 65520 (4095 << 4)
+    // 14-bit data scaled to 16-bit: max value around 65532 (16383 << 2)
+
+    // Check if values only use upper bits (indicating scaled lower-precision data)
+    // For genuine 10-bit data scaled to 16-bit, lower 6 bits should show a pattern
+    uint16_t lowerBitsMask = 0;
+    size_t samplesChecked = 0;
+    bool hasLower6Bits = false;
+    bool hasLower4Bits = false;
+    bool hasLower2Bits = false;
+
+    for (size_t i = 0; i < pixelCount && samplesChecked < 1000; i += step) {
+        for (int c = 0; c < numChannels; c++) {
+            uint16_t val = data[i * numChannels + c];
+            if (val > 0) {
+                // Check if lower bits are non-zero and don't match the pattern
+                // For properly scaled 10-bit: lower 6 bits = upper 6 bits of 10-bit value
+                // Pattern: (val >> 4) should equal (val & 0x3F) for scaled 10-bit
+                if ((val & 0x3F) != 0 && (val & 0x3F) != ((val >> 10) & 0x3F)) {
+                    hasLower6Bits = true;
+                }
+                if ((val & 0x0F) != 0 && (val & 0x0F) != ((val >> 12) & 0x0F)) {
+                    hasLower4Bits = true;
+                }
+                if ((val & 0x03) != 0 && (val & 0x03) != ((val >> 14) & 0x03)) {
+                    hasLower2Bits = true;
+                }
+                samplesChecked++;
+            }
+        }
+    }
+
+    // Determine bit depth based on analysis
+    if (maxValue <= 255) {
+        return 8;  // Data is actually 8-bit
+    } else if (maxValue <= 1023 || (!hasLower6Bits && maxValue <= 65472)) {
+        return 10; // 10-bit data (possibly scaled)
+    } else if (maxValue <= 4095 || (!hasLower4Bits && maxValue <= 65520)) {
+        return 12; // 12-bit data (possibly scaled)
+    } else if (maxValue <= 16383 || (!hasLower2Bits && maxValue <= 65532)) {
+        return 14; // 14-bit data (possibly scaled)
+    }
+
+    return 16; // True 16-bit data
+}
+
 // Unpack ARGB2101010 / RGBX1010102 packed 10-bit format to 16-bit RGB
 // Packed format on little-endian: 32-bit word where bits are arranged as:
 //   For noneSkipFirst (XRGB): 2-bit padding, 10-bit R, 10-bit G, 10-bit B (from high to low)
@@ -595,11 +713,37 @@ static void unpackPacked10BitToRGB16(const uint32_t* src, uint16_t* dst, size_t 
             } else {
                 stripAlpha16((uint16_t*)srcBuffer.data(), (uint16_t*)buffer.data(), pixelCount);
             }
+        } else if (info->bitsPerComponent == 32) {
+            // Float32 data (32-bit floats are always float, not integer)
+            convertToRGBA32_float((float*)srcBuffer.data(), pixelCount, info->alphaFirst, info->hasAlpha);
+
+            if (info->alphaPremultiplied && info->hasAlpha) {
+                unpremultiplyRGBA32_float((float*)srcBuffer.data(), pixelCount);
+            }
+
+            if (info->hasAlpha) {
+                buffer = std::move(srcBuffer);
+            } else {
+                stripAlpha32((float*)srcBuffer.data(), (float*)buffer.data(), pixelCount);
+            }
         }
     }
 
     // Update info to reflect output format
     info->bitsPerPixel = outChannels * info->bitsPerComponent;
+
+    // For 16-bit integer data, detect actual bit depth (may be 10-bit, 12-bit, etc.)
+    // This helps improve compression for HEIC/RAW images stored in 16-bit containers
+    if (info->bitsPerComponent == 16 && !info->isFloat && !info->isPacked10Bit) {
+        int actualBitDepth = detectActualBitDepth16(
+            (const uint16_t*)buffer.data(),
+            pixelCount,
+            outChannels
+        );
+        if (actualBitDepth < 16) {
+            info->originalBitsPerComponent = actualBitDepth;
+        }
+    }
 
     return true;
 }
