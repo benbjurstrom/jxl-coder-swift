@@ -50,6 +50,165 @@
     return true;
 }
 
+- (bool)jxlGetImageInfo:(nonnull JXLImageInfo*)info {
+    CGImageRef imageRef;
+#if TARGET_OS_OSX
+    imageRef = [self CGImageForProposedRect:nil context:nil hints:nil];
+#else
+    imageRef = [self CGImage];
+#endif
+    if (!imageRef) return false;
+
+    info->width = (int)CGImageGetWidth(imageRef);
+    info->height = (int)CGImageGetHeight(imageRef);
+    info->bitsPerComponent = (int)CGImageGetBitsPerComponent(imageRef);
+    info->bitsPerPixel = (int)CGImageGetBitsPerPixel(imageRef);
+
+    CGBitmapInfo bitmapInfo = CGImageGetBitmapInfo(imageRef);
+    info->isFloat = (bitmapInfo & kCGBitmapFloatComponents) != 0;
+
+    CGImageAlphaInfo alphaInfo = (CGImageAlphaInfo)(bitmapInfo & kCGBitmapAlphaInfoMask);
+    info->hasAlpha = (alphaInfo != kCGImageAlphaNone &&
+                      alphaInfo != kCGImageAlphaNoneSkipLast &&
+                      alphaInfo != kCGImageAlphaNoneSkipFirst);
+    info->alphaPremultiplied = (alphaInfo == kCGImageAlphaPremultipliedLast ||
+                                 alphaInfo == kCGImageAlphaPremultipliedFirst);
+    info->alphaFirst = (alphaInfo == kCGImageAlphaPremultipliedFirst ||
+                        alphaInfo == kCGImageAlphaFirst ||
+                        alphaInfo == kCGImageAlphaNoneSkipFirst);
+
+    CGBitmapInfo byteOrder = bitmapInfo & kCGBitmapByteOrderMask;
+    info->byteOrderLittle = (byteOrder == kCGBitmapByteOrder16Little ||
+                             byteOrder == kCGBitmapByteOrder32Little);
+
+    return true;
+}
+
+// Helper: swap channels for BGRA->RGBA or ARGB->RGBA
+static void normalizePixelOrder8(uint8_t* data, size_t pixelCount, bool alphaFirst, bool bgrOrder) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        uint8_t* p = data + i * 4;
+        if (alphaFirst) {
+            // ARGB -> RGBA
+            uint8_t a = p[0];
+            p[0] = p[1]; p[1] = p[2]; p[2] = p[3]; p[3] = a;
+        }
+        if (bgrOrder) {
+            // BGR(A) -> RGB(A)
+            uint8_t tmp = p[0];
+            p[0] = p[2];
+            p[2] = tmp;
+        }
+    }
+}
+
+static void normalizePixelOrder16(uint16_t* data, size_t pixelCount, bool alphaFirst, bool bgrOrder) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        uint16_t* p = data + i * 4;
+        if (alphaFirst) {
+            uint16_t a = p[0];
+            p[0] = p[1]; p[1] = p[2]; p[2] = p[3]; p[3] = a;
+        }
+        if (bgrOrder) {
+            uint16_t tmp = p[0];
+            p[0] = p[2];
+            p[2] = tmp;
+        }
+    }
+}
+
+// Helper: unpremultiply alpha
+static void unpremultiply16(uint16_t* data, size_t pixelCount) {
+    for (size_t i = 0; i < pixelCount; i++) {
+        uint16_t* p = data + i * 4;
+        uint16_t a = p[3];
+        if (a > 0 && a < 65535) {
+            float scale = 65535.0f / (float)a;
+            p[0] = std::min(65535, (int)(p[0] * scale));
+            p[1] = std::min(65535, (int)(p[1] * scale));
+            p[2] = std::min(65535, (int)(p[2] * scale));
+        }
+    }
+}
+
+- (bool)jxlExtractPixels:(std::vector<uint8_t>&)buffer
+              iccProfile:(std::vector<uint8_t>&)iccProfile
+                    info:(nonnull JXLImageInfo*)info {
+    CGImageRef imageRef;
+#if TARGET_OS_OSX
+    imageRef = [self CGImageForProposedRect:nil context:nil hints:nil];
+#else
+    imageRef = [self CGImage];
+#endif
+    if (!imageRef) return false;
+
+    [self jxlGetImageInfo:info];
+
+    // Extract ICC profile from source color space
+    CGColorSpaceRef colorSpace = CGImageGetColorSpace(imageRef);
+    if (colorSpace) {
+        CFDataRef iccData = CGColorSpaceCopyICCData(colorSpace);
+        if (iccData) {
+            const uint8_t* bytes = (const uint8_t*)CFDataGetBytePtr(iccData);
+            size_t len = CFDataGetLength(iccData);
+            iccProfile.assign(bytes, bytes + len);
+            CFRelease(iccData);
+        }
+    }
+
+    // Get raw pixel data directly - NO REDRAWING, preserves HDR values
+    CGDataProviderRef provider = CGImageGetDataProvider(imageRef);
+    if (!provider) return false;
+
+    CFDataRef pixelData = CGDataProviderCopyData(provider);
+    if (!pixelData) return false;
+
+    const uint8_t* src = (const uint8_t*)CFDataGetBytePtr(pixelData);
+    size_t dataLen = CFDataGetLength(pixelData);
+
+    size_t srcStride = CGImageGetBytesPerRow(imageRef);
+    int bytesPerPixel = info->bitsPerPixel / 8;
+    size_t dstStride = info->width * bytesPerPixel;
+
+    // Handle stride padding if present
+    if (srcStride == dstStride) {
+        buffer.assign(src, src + dataLen);
+    } else {
+        buffer.resize(dstStride * info->height);
+        for (int y = 0; y < info->height; y++) {
+            memcpy(buffer.data() + y * dstStride,
+                   src + y * srcStride,
+                   dstStride);
+        }
+    }
+
+    CFRelease(pixelData);
+
+    // Normalize pixel format to RGBA order
+    size_t pixelCount = info->width * info->height;
+    int numChannels = info->bitsPerPixel / info->bitsPerComponent;
+
+    // Only normalize 4-channel images (with alpha or skip)
+    if (numChannels == 4) {
+        // Detect if we need BGR swap (common on little-endian with 32-bit pixels)
+        bool needsBGRSwap = info->byteOrderLittle && info->bitsPerComponent == 8;
+
+        if (info->bitsPerComponent == 8) {
+            normalizePixelOrder8(buffer.data(), pixelCount, info->alphaFirst, needsBGRSwap);
+            if (info->alphaPremultiplied) {
+                [self unpremultiply:buffer.data() width:info->width height:info->height];
+            }
+        } else if (info->bitsPerComponent == 16) {
+            normalizePixelOrder16((uint16_t*)buffer.data(), pixelCount, info->alphaFirst, false);
+            if (info->alphaPremultiplied) {
+                unpremultiply16((uint16_t*)buffer.data(), pixelCount);
+            }
+        }
+    }
+
+    return true;
+}
+
 #if TARGET_OS_OSX
 
 -(nullable CGImageRef)makeCGImage {

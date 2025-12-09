@@ -1,182 +1,142 @@
-# JxlCoder
+# JxlCoder (HDR Fork)
 
-## What's This?
-This package is provides support for Jpeg XL images for all apple platforms.
-Supports encode JXL ( Jpeg XL ) on iOS, MacOS and decode JXL ( Jpeg XL ) images in convinient and fast way for the single image and animation.
+> **This is a fork of [awxkee/jxl-coder-swift](https://github.com/awxkee/jxl-coder-swift)** with added HDR encoding support for archiving high bit-depth images.
 
-A package to decode Jpeg XL on iOS, MacOS or encode JXL images. Also provider JXL support on iOS for Nuke and SDWebImage. Have support for older versions of iOS, MacOSX and all the simulators that doesn't have support Jpeg XL images. Also support Objective C interoping for old projects via Cocoapods
+## Warning: AI-Generated Code
 
-Supported ICC Profiles and HDR images. Also supports animated JPEG XL images decoding and encoding.
-Contains integration for SDWebImage to decode single image and animated Jpeg XL images.
+This fork contains AI-generated code (Claude). While the implementation follows the libjxl API correctly, please:
+- Test thoroughly with your specific image types before production use
+- Verify encoded files can be decoded correctly
+- Check that color profiles are preserved as expected
 
-Package based on `libjxl`
-</br>
-Main aim of the project is to use `JXL` image on all Apple platforms etc with usable speed and convenience
+## What's Different in This Fork
 
-Precompiled to serve JXL (Jpeg XL) on iOS 11+, Mac OS 11+
+The original library only supported 8-bit sRGB encoding, losing HDR data during the encode process. This fork adds:
+
+- **HDR encoding via `encodeHDR()`** - preserves original bit depth (8/10/12/14/16-bit)
+- **ICC profile passthrough** - maintains color space (BT.2020, Display P3, camera profiles)
+- **Direct pixel extraction** - no redrawing, no precision loss
+- **Lossless mode default** - ideal for archival
+/
+| Source Type | Original Library | This Fork |
+|-------------|------------------|-----------|
+| 8-bit JPEG/PNG | 8-bit sRGB | 8-bit + ICC |
+| 10-bit HEIC HDR | 8-bit sRGB (HDR lost) | 16-bit + BT.2020 ICC |
+| 12-14 bit RAW | 8-bit sRGB (data lost) | 16-bit + camera ICC |
 
 ## Installation
 
-### [Swift Package Manager](https://swift.org/package-manager/)
+### Swift Package Manager
 
-Go to `File / Swift Packages / Add Package Dependency…`
-and enter package repository URL https://github.com/awxkee/jxl-coder-swift, then select the latest master branch
-at the time of writing.
-
-### CocoaPods
-
-Add 
-```ruby
-pod 'JxlCoder'
-# if you need a SDWebImage extensions
-pod 'JxlSDWebImageCoder'
-```
-to your Podfile and then
-```shell
-pod install
+```swift
+dependencies: [
+    .package(url: "https://github.com/anthropics/jxl-coder-swift.git", branch: "main")
+]
 ```
 
 ## Usage
 
+### HDR Encoding (New)
+
 ```swift
 import JxlCoder
-// Decompress data
-let uiImage: UIImage = try JXLCoder.decode(data: Data()) // or any max CGSize of image
-// Compress
-let data: Data = try JXLCoder.encode(data: UIImage())
+
+// Load any image - 8-bit, 10-bit HEIC, or RAW
+let image = UIImage(contentsOfFile: "/path/to/image.heic")!
+
+// Encode preserving full fidelity (lossless, max effort)
+let jxlData = try JXLCoder.encodeHDR(
+    image: image,
+    compressionOption: .loseless,  // Use .lossy for smaller files
+    effort: 9                       // 1-9, higher = smaller but slower
+)
+
+// Save to file
+try jxlData.write(to: URL(fileURLWithPath: "/path/to/output.jxl"))
 ```
 
-## Usage for animations
-```swift
-// Decoding
-let decoder = try! JXLAnimatedDecoder(data: animationJxlData)
-let framesCount = Int(decoder.numberOfFrames)
-print("frames count \(framesCount)")
-let duration = decoder.frameDuration(currentFrame)
-let frame: UIImage = try! decoder.get(frame: currentFrame)
+### Lossy HDR Encoding
 
-// Encoding
-let animEncoder = try! JXLAnimatedEncoder(width: frameToAnimate.size.width,
-                                         height: frameToAnimate.size.height)
-try! animEncoder.add(frame: frameToAnimate, duration: 150) // duration is in ms
-try! animEncoder.add(frame: frameToAnimate, duration: 150)
-try! animEncoder.add(frame: frameToAnimate, duration: 150)
-try! animEncoder.add(frame: frameToAnimate, duration: 150)
-try! animEncoder.add(frame: frameToAnimate, duration: 150)
-// etc and then finish the encoding
-let animationJxlData = try! animEncoder.finish()
+```swift
+// For smaller files with minimal quality loss
+let jxlData = try JXLCoder.encodeHDR(
+    image: image,
+    compressionOption: .lossy,
+    effort: 7,
+    quality: 90  // 0-100, higher = better quality
+)
 ```
 
-## Loseless JPEG transcoding
+### Decoding (Unchanged)
 
 ```swift
-let transcoded = try! JXLCoder.transcode(jpegData: Data())
-let jpegData: Data = try! JXLCoder.inverse(jxlData: Data())
-```
+// Decode JXL back to UIImage/NSImage
+let decoded = try JXLCoder.decode(data: jxlData)
 
-## Jpegli encoding
-
-```swift
-let encoded: Data = try! JpegLiEncoder.encode(image: UIImage())
-```
-
-## Nuke Plugin
-
-If you wish to use `JXL` with <a href="https://github.com/kean/Nuke" target="_blank">`Nuke`</a> you may add `JxlCoder` library to project and activate the plugin on app init
-### Use code below in your project or add a pod `JxlNukePlugin`
-```swift
-public final class JxlNukePlugin: Nuke.ImageDecoding {
-    public func decode(_ data: Data) throws -> Nuke.ImageContainer {
-        guard try JXLCoder.isJXL(data: data) else { throw JXLNukePluginDecodeError() }
-        let image = try JXLCoder.decode(data: data)
-        return ImageContainer(image: image)
-    }
-
-    public init() {
-    }
-
-    public func decodePartiallyDownloadedData(_ data: Data) -> ImageContainer? {
-        return nil
-    }
-}
-
-public struct JXLNukePluginDecodeError: LocalizedError, CustomNSError {
-    public var errorDescription: String? {
-        "JXL file cannot be decoded"
-    }
-
-    public var errorUserInfo: [String : Any] {
-        [NSLocalizedDescriptionKey: "JXL file cannot be decoded"]
-    }
-}
-
-// MARK: - check JXL format data.
-extension JxlNukePlugin {
-
-    public static func enable() {
-        Nuke.ImageDecoderRegistry.shared.register { (context) -> ImageDecoding? in
-            JxlNukePlugin.enable(context: context)
-        }
-    }
-
-    public static func enable(context: Nuke.ImageDecodingContext) -> Nuke.ImageDecoding? {
-        return try? JXLCoder.isJXL(data: context.data) ? JxlNukePlugin() : nil
-    }
-
+// Check if decoded image is HDR
+if decoded.isHighDynamicRange {
+    print("HDR preserved!")
 }
 ```
 
-## Jxl SDWebImagePlugin
-### Use provided code or include pod `JxlSDWebImageCoder` or include the code below
+### Standard Encoding (Original API)
+
+The original encoding API is still available for backwards compatibility:
+
 ```swift
-#if canImport(JxlCoder)
-import JxlCoder
-#endif
-import SDWebImage
-
-public class JxlSDWebImageCoder: NSObject, SDImageCoder {
-    public override init() {
-    }
-
-    public func canDecode(from data: Data?) -> Bool {
-        guard let data else {
-            return false
-        }
-        return (try? JXLCoder.isJXL(data: data)) ?? false
-    }
-
-    public func decodedImage(with data: Data?, options: [SDImageCoderOption : Any]? = nil) -> UIImage? {
-        guard let data else {
-            return nil
-        }
-        return try? JXLCoder.decode(data: data)
-    }
-
-    public func canEncode(to format: SDImageFormat) -> Bool {
-        true
-    }
-
-    public func encodedData(with image: UIImage?, format: SDImageFormat, options: [SDImageCoderOption : Any]? = nil) -> Data? {
-        guard let image else {
-            return nil
-        }
-        return try? JXLCoder.encode(image: image)
-    }
-}
-
-// don't forget to register the plugin after
-SDImageCodersManager.shared.addCoder(JxlSDWebImageCoder())
-// IMPORTANT: if you will use the animated Jpeg XL image you have to use other plugin
-SDImageCodersManager.shared.addCoder(JxlAnimatedSDWebImageCoder())
+let data = try JXLCoder.encode(image: image)  // 8-bit sRGB only
 ```
 
-Currently, JXL nuke plugin do not support animated JXLs so you have to do it yourself
+## API Reference
 
-## Disclaimer
-The JPEG XL call for proposals talks about the requirement of a next generation image compression standard with substantially better compression efficiency (60% improvement) comparing to JPEG. The standard is expected to outperform the still image compression performance shown by HEIC, AVIF, WebP, and JPEG 2000. It also provides efficient lossless recompression options for images in the traditional/legacy JPEG format.
+### `JXLCoder.encodeHDR`
 
-JPEG XL supports lossy compression and lossless compression of ultra-high-resolution images (up to 1 terapixel), up to 32 bits per component, up to 4099 components (including alpha transparency), animated images, and embedded previews. It has features aimed at web delivery such as advanced progressive decoding[13] and minimal header overhead, as well as features aimed at image editing and digital printing, such as support for multiple layers, CMYK, and spot colors. It is specifically designed to seamlessly handle wide color gamut color spaces with high dynamic range such as Rec. 2100 with the PQ or HLG transfer function. 
+```swift
+public static func encodeHDR(
+    image: JXLPlatformImage,
+    compressionOption: JXLCompressionOption = .lossless,
+    effort: Int = 7,
+    quality: Int = 0,
+    decodingSpeed: JXLEncoderDecodingSpeed = .slowest
+) throws -> Data
+```
 
-## TODO
-- [ ] Tests
-- [ ] Some examples 
+**Parameters:**
+- `image`: Source UIImage/NSImage (any bit depth)
+- `compressionOption`: `.loseless` (default, best for archival) or `.lossy`
+- `effort`: 1-9, compression effort (default 7). Higher = smaller file, slower encode
+- `quality`: 0-100, only for lossy mode. 0 = best quality (distance ~1.0)
+- `decodingSpeed`: Trade-off between decode speed and file size
+
+**Returns:** JXL encoded Data
+
+## Platform Support
+
+- iOS 13.0+
+- macOS 12.0+
+
+## How It Works
+
+The HDR encoding pipeline:
+
+1. **Direct pixel access** - Uses `CGDataProviderCopyData` instead of redrawing, preserving original values
+2. **ICC extraction** - Captures the source color profile via `CGColorSpaceCopyICCData`
+3. **Bit depth detection** - Reads `CGImageGetBitsPerComponent` to determine 8/16-bit
+4. **Format normalization** - Handles BGRA/ARGB/premultiplied alpha variations
+5. **libjxl encoding** - Uses `JxlEncoderSetICCProfile` and appropriate bit depth settings
+
+## License
+
+Same as original: See [LICENSE](LICENSE) file.
+
+## Original Library
+
+For the original library without HDR encoding, see [awxkee/jxl-coder-swift](https://github.com/awxkee/jxl-coder-swift).
+
+The original library provides:
+- JXL decoding with HDR support
+- 8-bit sRGB encoding
+- Animation support
+- JPEG lossless transcoding
+- Jpegli encoding
+- Nuke and SDWebImage plugins

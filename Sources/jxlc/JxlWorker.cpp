@@ -367,3 +367,170 @@ bool isJXL(std::vector<uint8_t>& src) {
     }
     return true;
 }
+
+// HDR-aware encoder that preserves bit depth and color profile
+bool EncodeJxlHDR(
+    const std::vector<uint8_t>& pixels,
+    uint32_t xsize, uint32_t ysize,
+    std::vector<uint8_t>* compressed,
+    int numChannels,
+    int bitsPerSample,
+    bool isFloat,
+    const std::vector<uint8_t>* iccProfile,
+    JxlCompressionOption compressionOption,
+    float compressionDistance,
+    int effort,
+    int decodingSpeed
+) {
+    auto enc = JxlEncoderMake(nullptr);
+    auto runner = JxlThreadParallelRunnerMake(
+        nullptr, JxlThreadParallelRunnerDefaultNumWorkerThreads());
+
+    if (JXL_ENC_SUCCESS != JxlEncoderSetParallelRunner(
+            enc.get(), JxlThreadParallelRunner, runner.get())) {
+        return false;
+    }
+
+    // Basic info - preserve original bit depth
+    JxlBasicInfo basicInfo;
+    JxlEncoderInitBasicInfo(&basicInfo);
+    basicInfo.xsize = xsize;
+    basicInfo.ysize = ysize;
+    basicInfo.num_color_channels = 3;
+    basicInfo.bits_per_sample = bitsPerSample;
+
+    // For float formats, set exponent bits (float16 = 5, float32 = 8)
+    if (isFloat) {
+        basicInfo.exponent_bits_per_sample = (bitsPerSample == 16) ? 5 : 8;
+    } else {
+        basicInfo.exponent_bits_per_sample = 0;
+    }
+
+    // For lossless with ICC profile, must use original profile
+    basicInfo.uses_original_profile = (compressionOption == loseless) ? JXL_TRUE : JXL_FALSE;
+
+    if (numChannels == 4) {
+        basicInfo.num_extra_channels = 1;
+        basicInfo.alpha_bits = bitsPerSample;
+        basicInfo.alpha_exponent_bits = isFloat ? basicInfo.exponent_bits_per_sample : 0;
+    }
+
+    if (JXL_ENC_SUCCESS != JxlEncoderSetBasicInfo(enc.get(), &basicInfo)) {
+        return false;
+    }
+
+    // Alpha channel info
+    if (numChannels == 4) {
+        JxlExtraChannelInfo channelInfo;
+        JxlEncoderInitExtraChannelInfo(JXL_CHANNEL_ALPHA, &channelInfo);
+        channelInfo.bits_per_sample = bitsPerSample;
+        channelInfo.exponent_bits_per_sample = isFloat ? basicInfo.exponent_bits_per_sample : 0;
+        channelInfo.alpha_premultiplied = JXL_FALSE;
+        if (JXL_ENC_SUCCESS != JxlEncoderSetExtraChannelInfo(enc.get(), 0, &channelInfo)) {
+            return false;
+        }
+    }
+
+    // COLOR ENCODING - critical for HDR preservation
+    if (iccProfile && !iccProfile->empty()) {
+        // Use ICC profile - preserves HDR color space (BT.2020, Display P3, etc.)
+        if (JXL_ENC_SUCCESS != JxlEncoderSetICCProfile(
+                enc.get(), iccProfile->data(), iccProfile->size())) {
+            return false;
+        }
+    } else {
+        // Fallback to sRGB for images without ICC profile
+        JxlColorEncoding color_encoding = {};
+        JxlColorEncodingSetToSRGB(&color_encoding, numChannels < 3);
+        if (JXL_ENC_SUCCESS != JxlEncoderSetColorEncoding(enc.get(), &color_encoding)) {
+            return false;
+        }
+    }
+
+    // Frame settings
+    JxlEncoderFrameSettings* frameSettings =
+        JxlEncoderFrameSettingsCreate(enc.get(), nullptr);
+
+    // Bit depth setting
+    JxlBitDepth depth;
+    depth.bits_per_sample = bitsPerSample;
+    depth.exponent_bits_per_sample = isFloat ? basicInfo.exponent_bits_per_sample : 0;
+    depth.type = JXL_BIT_DEPTH_FROM_PIXEL_FORMAT;
+    if (JXL_ENC_SUCCESS != JxlEncoderSetFrameBitDepth(frameSettings, &depth)) {
+        return false;
+    }
+
+    // Lossless mode
+    if (JXL_ENC_SUCCESS != JxlEncoderSetFrameLossless(
+            frameSettings, compressionOption == loseless)) {
+        return false;
+    }
+
+    // Effort setting
+    if (JXL_ENC_SUCCESS != JxlEncoderFrameSettingsSetOption(
+            frameSettings, JXL_ENC_FRAME_SETTING_EFFORT, effort)) {
+        return false;
+    }
+
+    // Decoding speed setting
+    if (JXL_ENC_SUCCESS != JxlEncoderFrameSettingsSetOption(
+            frameSettings, JXL_ENC_FRAME_SETTING_DECODING_SPEED, decodingSpeed)) {
+        return false;
+    }
+
+    // Distance (quality) - only applies to lossy
+    if (compressionOption != loseless) {
+        if (JXL_ENC_SUCCESS != JxlEncoderSetFrameDistance(frameSettings, compressionDistance)) {
+            return false;
+        }
+        if (numChannels == 4) {
+            if (JXL_ENC_SUCCESS != JxlEncoderSetExtraChannelDistance(
+                    frameSettings, 0, compressionDistance)) {
+                return false;
+            }
+        }
+    }
+
+    // Pixel format - match input bit depth and type
+    JxlDataType dataType;
+    if (isFloat) {
+        dataType = (bitsPerSample == 16) ? JXL_TYPE_FLOAT16 : JXL_TYPE_FLOAT;
+    } else {
+        dataType = (bitsPerSample <= 8) ? JXL_TYPE_UINT8 : JXL_TYPE_UINT16;
+    }
+
+    JxlPixelFormat pixel_format = {
+        static_cast<uint32_t>(numChannels),
+        dataType,
+        JXL_NATIVE_ENDIAN,
+        0
+    };
+
+    // Add image frame
+    if (JXL_ENC_SUCCESS != JxlEncoderAddImageFrame(
+            frameSettings, &pixel_format,
+            pixels.data(), pixels.size())) {
+        return false;
+    }
+
+    JxlEncoderCloseInput(enc.get());
+
+    // Process output with dynamic buffer growth
+    compressed->resize(64);
+    uint8_t* next_out = compressed->data();
+    size_t avail_out = compressed->size();
+    JxlEncoderStatus status = JXL_ENC_NEED_MORE_OUTPUT;
+
+    while (status == JXL_ENC_NEED_MORE_OUTPUT) {
+        status = JxlEncoderProcessOutput(enc.get(), &next_out, &avail_out);
+        if (status == JXL_ENC_NEED_MORE_OUTPUT) {
+            size_t offset = next_out - compressed->data();
+            compressed->resize(compressed->size() * 2);
+            next_out = compressed->data() + offset;
+            avail_out = compressed->size() - offset;
+        }
+    }
+
+    compressed->resize(next_out - compressed->data());
+    return status == JXL_ENC_SUCCESS;
+}

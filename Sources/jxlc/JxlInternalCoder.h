@@ -45,6 +45,15 @@
                      quality:(int)quality
                      decodingSpeed:(JXLEncoderDecodingSpeed)decodingSpeed
                      error:(NSError * _Nullable *_Nullable)error;
+
+/// HDR-aware encoder that preserves bit depth and ICC color profile.
+/// Ideal for archiving RAW, HEIC HDR, and other high-fidelity sources.
+- (nullable NSData *)encodeHDR:(nonnull JXLSystemImage *)platformImage
+             compressionOption:(JXLCompressionOption)compressionOption
+                        effort:(int)effort
+                       quality:(int)quality
+                 decodingSpeed:(JXLEncoderDecodingSpeed)decodingSpeed
+                         error:(NSError * _Nullable *_Nullable)error;
 @end
 
 #endif /* JXLCoder_h */

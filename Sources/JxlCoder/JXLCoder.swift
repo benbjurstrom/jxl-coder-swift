@@ -161,4 +161,34 @@ public class JXLCoder {
     public static func utiIdentifier() -> String {
         "dyn.ah62d4rv4ge80y8dq"
     }
+
+    /// Encode image preserving HDR/wide color gamut and original bit depth.
+    ///
+    /// This method extracts pixels directly from the source image without redrawing,
+    /// preserving the original bit depth (8, 10, 12, 14, 16-bit) and ICC color profile.
+    /// Ideal for archiving RAW files, HEIC HDR images, and other high-fidelity sources.
+    ///
+    /// - Parameters:
+    ///   - image: Source image (supports 8-bit standard, 10-bit HEIC HDR, 12-16 bit RAW)
+    ///   - compressionOption: Use `.lossless` for archival, `.lossy` for smaller files
+    ///   - effort: Compression effort 1-9, higher = smaller file but slower (7 recommended)
+    ///   - quality: 0-100, only used for lossy mode (0 = best quality, smallest distance)
+    ///   - decodingSpeed: Trade decode speed vs file size
+    /// - Returns: JXL encoded data preserving full color fidelity and bit depth
+    /// - Throws: If encoding fails
+    public static func encodeHDR(
+        image: JXLPlatformImage,
+        compressionOption: JXLCompressionOption = .loseless,
+        effort: Int = 7,
+        quality: Int = 0,
+        decodingSpeed: JXLEncoderDecodingSpeed = .slowest
+    ) throws -> Data {
+        return try shared.encodeHDR(
+            image,
+            compressionOption: compressionOption,
+            effort: Int32(effort),
+            quality: Int32(quality),
+            decodingSpeed: decodingSpeed
+        )
+    }
 }

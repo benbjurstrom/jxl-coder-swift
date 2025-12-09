@@ -37,7 +37,7 @@ static void JXLCGData8ProviderReleaseDataCallback(void *info, const void *data, 
     delete dataWrapper;
 }
 
-static inline float JXLGetDistance(const int quality)
+static inline float JXLGetDistance(int quality)
 {
     if (quality == 0)
         return(1.0f);
@@ -47,6 +47,10 @@ static inline float JXLGetDistance(const int quality)
     : 53.0 / 3000.0 * quality * quality -
     23.0 / 20.0 * quality + 25.0;
     return distance;
+}
+
+static inline JxlCompressionOption toJxlCompressionOption(JXLCompressionOption opt) {
+    return (opt == kLoseless) ? loseless : loosy;
 }
 
 @implementation JxlInternalCoder
@@ -369,6 +373,91 @@ static inline float JXLGetDistance(const int quality)
                                             code:500
                                         userInfo:@{ NSLocalizedDescriptionKey: [NSString stringWithFormat:@"Decoding image memory error: %s", err.what()] }];
         return nullptr;
+    }
+}
+
+- (nullable NSData *)encodeHDR:(nonnull JXLSystemImage *)platformImage
+             compressionOption:(JXLCompressionOption)compressionOption
+                        effort:(int)effort
+                       quality:(int)quality
+                 decodingSpeed:(JXLEncoderDecodingSpeed)decodingSpeed
+                         error:(NSError * _Nullable *_Nullable)error {
+    try {
+        if (quality < 0 || quality > 100) {
+            *error = [[NSError alloc] initWithDomain:@"JXLCoder" code:500
+                userInfo:@{ NSLocalizedDescriptionKey: @"Quality must be clamped in 0...100" }];
+            return nil;
+        }
+
+        if (effort < 1 || effort > 9) {
+            *error = [[NSError alloc] initWithDomain:@"JXLCoder" code:500
+                userInfo:@{ NSLocalizedDescriptionKey: @"Effort must be clamped in 1...9" }];
+            return nil;
+        }
+
+        std::vector<uint8_t> pixels;
+        std::vector<uint8_t> iccProfile;
+        JXLImageInfo info;
+
+        // Extract pixels with full fidelity - preserves HDR data
+        if (![platformImage jxlExtractPixels:pixels iccProfile:iccProfile info:&info]) {
+            *error = [[NSError alloc] initWithDomain:@"JXLCoder" code:500
+                userInfo:@{ NSLocalizedDescriptionKey: @"Failed to extract pixel data from image" }];
+            return nil;
+        }
+
+        if (info.width <= 0 || info.height <= 0) {
+            *error = [[NSError alloc] initWithDomain:@"JXLCoder" code:500
+                userInfo:@{ NSLocalizedDescriptionKey: @"Width and height must be > 0" }];
+            return nil;
+        }
+
+        // Determine number of channels from bits per pixel / bits per component
+        int numChannels = info.bitsPerPixel / info.bitsPerComponent;
+
+        // Map quality to distance
+        float distance = JXLGetDistance(quality);
+
+        JXLDataWrapper<uint8_t>* wrapper = new JXLDataWrapper<uint8_t>();
+
+        bool success = EncodeJxlHDR(
+            pixels,
+            info.width, info.height,
+            &wrapper->data,
+            numChannels,
+            info.bitsPerComponent,
+            info.isFloat,
+            iccProfile.empty() ? nullptr : &iccProfile,
+            toJxlCompressionOption(compressionOption),
+            distance,
+            effort,
+            (int)decodingSpeed
+        );
+
+        if (!success) {
+            delete wrapper;
+            *error = [[NSError alloc] initWithDomain:@"JXLCoder" code:500
+                userInfo:@{ NSLocalizedDescriptionKey: @"JXL HDR encoding failed" }];
+            return nil;
+        }
+
+        pixels.clear();
+        pixels.shrink_to_fit();
+
+        auto data = [[NSData alloc] initWithBytesNoCopy:wrapper->data.data()
+                                                 length:wrapper->data.size()
+                                            deallocator:^(void * _Nonnull bytes, NSUInteger length) {
+            delete wrapper;
+        }];
+
+        return data;
+
+    } catch (std::bad_alloc &err) {
+        *error = [[NSError alloc] initWithDomain:@"JXLCoder"
+                                            code:500
+                                        userInfo:@{ NSLocalizedDescriptionKey:
+                    [NSString stringWithFormat:@"Encoding HDR image memory error: %s", err.what()] }];
+        return nil;
     }
 }
 @end

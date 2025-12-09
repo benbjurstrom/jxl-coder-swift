@@ -52,6 +52,21 @@ bool EncodeJxlOneshot(const std::vector<uint8_t> &pixels, const uint32_t xsize,
                       int effort,
                       int decodingSpeed);
 
+// HDR-aware encoder that preserves bit depth and color profile
+bool EncodeJxlHDR(
+    const std::vector<uint8_t>& pixels,
+    uint32_t xsize, uint32_t ysize,
+    std::vector<uint8_t>* compressed,
+    int numChannels,                         // 3 or 4
+    int bitsPerSample,                       // 8, 10, 12, 16
+    bool isFloat,                            // true for float16/float32
+    const std::vector<uint8_t>* iccProfile,  // can be nullptr for sRGB fallback
+    JxlCompressionOption compressionOption,
+    float compressionDistance,
+    int effort,
+    int decodingSpeed
+);
+
 bool isJXL(std::vector<uint8_t>& src);
 
 template <typename DataType>

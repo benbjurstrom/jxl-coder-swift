@@ -43,6 +43,19 @@
 #include <vector>
 #endif
 
+// Image info structure for HDR-aware encoding
+typedef struct {
+    int width;
+    int height;
+    int bitsPerComponent;      // 8, 16, or 32
+    int bitsPerPixel;          // total bits (e.g., 64 for RGBA16)
+    bool isFloat;              // true for float16/float32
+    bool hasAlpha;
+    bool alphaPremultiplied;
+    bool alphaFirst;           // ARGB vs RGBA
+    bool byteOrderLittle;      // byte order for 16/32 bit
+} JXLImageInfo;
+
 typedef NS_ENUM(NSInteger, JXLColorSpace)  {
     kRGB NS_SWIFT_NAME(rgb),
     kRGBA NS_SWIFT_NAME(rgba)
@@ -70,6 +83,10 @@ typedef NS_ENUM(NSInteger, JXLEncoderDecodingSpeed)  {
 @interface JXLSystemImage (JXLColorData)
 #ifdef __cplusplus
 - (bool)jxlRGBAPixels:(std::vector<uint8_t>&)buffer width:(nonnull int*)xSize height:(nonnull int*)ySize;
+- (bool)jxlGetImageInfo:(nonnull JXLImageInfo*)info;
+- (bool)jxlExtractPixels:(std::vector<uint8_t>&)buffer
+              iccProfile:(std::vector<uint8_t>&)iccProfile
+                    info:(nonnull JXLImageInfo*)info;
 #endif
 @end
 
