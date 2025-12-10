@@ -160,3 +160,10 @@ Check if `originalBitsPerComponent` is being set correctly. 10-bit sources store
 
 ### Lossy encoding color issues with ICC profiles
 For lossy encoding, skip ICC profiles and use `JxlColorEncoding` with parametric transfer/primaries. libjxl may mishandle ICC profiles for lossy, converting them to sRGB internally.
+
+### RAW files have dim highlights compared to Preview
+This is NOT a bug in the encoder. When RAW files (DNG, ARW, CR2) are loaded via `NSImage(contentsOf:)`, ImageIO uses basic RAW rendering. Preview.app uses Apple's full RAW pipeline with gain maps, tone curves, and highlight recovery.
+
+**Solution**: The calling application should use `CIRAWFilter` to process RAW files before passing to JXLCoder. This is documented in README.md. The library faithfully encodes whatever image it receives - RAW processing is the application's responsibility.
+
+**Key insight**: DNG files have a `ProfileGainTableMap` field that ImageIO ignores but Preview uses. This causes the brightness difference.

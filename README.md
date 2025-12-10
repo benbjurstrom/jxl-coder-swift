@@ -79,6 +79,51 @@ if decoded.isHighDynamicRange {
 }
 ```
 
+### RAW File Handling
+
+**Important:** When encoding RAW files (DNG, ARW, CR2, etc.), loading via `NSImage(contentsOf:)` or `UIImage(contentsOfFile:)` uses ImageIO's basic RAW rendering, which produces dimmer highlights compared to what Preview.app displays.
+
+For RAW files that match Preview's rendering, use `CIRAWFilter` in your application before passing to JXLCoder:
+
+```swift
+import CoreImage
+import UniformTypeIdentifiers
+
+func loadRAWImage(from url: URL) -> CGImage? {
+    // Check if it's a RAW file
+    guard let type = UTType(filenameExtension: url.pathExtension),
+          type.conforms(to: .rawImage) else {
+        // Not a RAW file, load normally
+        return NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    }
+
+    // Use CIRAWFilter for RAW files
+    guard let filter = CIRAWFilter(imageURL: url) else { return nil }
+
+    // Match Preview's rendering
+    filter.boostAmount = 1.0
+    filter.isGamutMappingEnabled = true
+    filter.isLensCorrectionEnabled = true
+
+    guard let outputImage = filter.outputImage else { return nil }
+
+    let context = CIContext(options: [
+        .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)!,
+        .outputColorSpace: CGColorSpace(name: CGColorSpace.displayP3)!
+    ])
+
+    return context.createCGImage(outputImage, from: outputImage.extent)
+}
+
+// Then encode:
+if let cgImage = loadRAWImage(from: rawURL) {
+    let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+    let jxlData = try JXLCoder.encodeHDR(image: nsImage)
+}
+```
+
+**Note:** Converting RAW to JXL "bakes in" the tone curve and exposure. The resulting JXL is a rendered image, not raw sensor data. For full editing flexibility, keep the original RAW files.
+
 ### Standard Encoding (Original API)
 
 The original encoding API is still available for backwards compatibility:
