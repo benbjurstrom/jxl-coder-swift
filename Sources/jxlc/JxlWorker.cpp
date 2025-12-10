@@ -383,7 +383,9 @@ bool EncodeJxlHDR(
     JxlCompressionOption compressionOption,
     float compressionDistance,
     int effort,
-    int decodingSpeed
+    int decodingSpeed,
+    const std::vector<uint8_t>* exifData,
+    const std::vector<uint8_t>* xmpData
 ) {
     auto enc = JxlEncoderMake(nullptr);
     auto runner = JxlThreadParallelRunnerMake(
@@ -606,6 +608,51 @@ bool EncodeJxlHDR(
     if (pixels.size() != expectedSize) {
         // Buffer size mismatch - this would cause encoding to fail
         return false;
+    }
+
+    // Add metadata boxes (EXIF and XMP) if provided
+    // Boxes must be added before the image frame
+    bool hasMetadata = (exifData && !exifData->empty()) || (xmpData && !xmpData->empty());
+    if (hasMetadata) {
+        // Enable box-based container format
+        if (JXL_ENC_SUCCESS != JxlEncoderUseBoxes(enc.get())) {
+            return false;
+        }
+
+        // Add EXIF box
+        // JXL "Exif" box requires a 4-byte big-endian TIFF header offset prefix
+        // The offset indicates where the TIFF header starts (usually 4, meaning immediately after)
+        if (exifData && !exifData->empty()) {
+            // Prepend 4-byte offset: 0x00000000 means TIFF header starts at byte 4
+            // (immediately after the offset field itself)
+            std::vector<uint8_t> exifWithOffset;
+            exifWithOffset.reserve(4 + exifData->size());
+            // Big-endian offset = 0 (TIFF header is at position 0 relative to after offset)
+            exifWithOffset.push_back(0x00);
+            exifWithOffset.push_back(0x00);
+            exifWithOffset.push_back(0x00);
+            exifWithOffset.push_back(0x00);
+            exifWithOffset.insert(exifWithOffset.end(), exifData->begin(), exifData->end());
+
+            JxlBoxType exifBoxType = {'E', 'x', 'i', 'f'};
+            if (JXL_ENC_SUCCESS != JxlEncoderAddBox(enc.get(), exifBoxType,
+                    exifWithOffset.data(), exifWithOffset.size(), JXL_FALSE)) {
+                // Non-fatal: continue without EXIF if it fails
+            }
+        }
+
+        // Add XMP box (type "xml ")
+        if (xmpData && !xmpData->empty()) {
+            JxlBoxType xmpBoxType = {'x', 'm', 'l', ' '};
+            // XMP can be Brotli-compressed for smaller files
+            if (JXL_ENC_SUCCESS != JxlEncoderAddBox(enc.get(), xmpBoxType,
+                    xmpData->data(), xmpData->size(), JXL_TRUE)) {
+                // Non-fatal: continue without XMP if it fails
+            }
+        }
+
+        // Close boxes section before adding image frame
+        JxlEncoderCloseBoxes(enc.get());
     }
 
     // Add image frame

@@ -191,4 +191,42 @@ public class JXLCoder {
             decodingSpeed: decodingSpeed
         )
     }
+
+    /// Encode image preserving HDR/wide color gamut, original bit depth, and metadata.
+    ///
+    /// This method extracts pixels directly from the source image without redrawing,
+    /// preserving the original bit depth (8, 10, 12, 14, 16-bit), ICC color profile,
+    /// and embeds EXIF/XMP metadata into the JXL container.
+    ///
+    /// Ideal for archiving RAW files, HEIC HDR images, and other high-fidelity sources
+    /// while preserving date/time, GPS location, camera/lens info, and exposure data.
+    ///
+    /// - Parameters:
+    ///   - image: Source image (supports 8-bit standard, 10-bit HEIC HDR, 12-16 bit RAW)
+    ///   - metadata: Optional metadata to embed (EXIF/XMP). Use `JXLMetadata.extract(from:)`
+    ///               to extract from source file, or `JXLMetadata(properties:)` from ImageIO dict.
+    ///   - compressionOption: Use `.lossless` for archival, `.lossy` for smaller files
+    ///   - effort: Compression effort 1-9, higher = smaller file but slower (7 recommended)
+    ///   - quality: 0-100, only used for lossy mode (0 = best quality, smallest distance)
+    ///   - decodingSpeed: Trade decode speed vs file size
+    /// - Returns: JXL encoded data preserving full color fidelity, bit depth, and metadata
+    /// - Throws: If encoding fails
+    public static func encodeHDR(
+        image: JXLPlatformImage,
+        metadata: JXLMetadata?,
+        compressionOption: JXLCompressionOption = .lossless,
+        effort: Int = 7,
+        quality: Int = 0,
+        decodingSpeed: JXLEncoderDecodingSpeed = .slowest
+    ) throws -> Data {
+        return try shared.encodeHDR(
+            image,
+            exifData: metadata?.exifData,
+            xmpData: metadata?.xmpData,
+            compressionOption: compressionOption,
+            effort: Int32(effort),
+            quality: Int32(quality),
+            decodingSpeed: decodingSpeed
+        )
+    }
 }

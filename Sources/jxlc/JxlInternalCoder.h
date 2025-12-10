@@ -54,6 +54,25 @@
                        quality:(int)quality
                  decodingSpeed:(JXLEncoderDecodingSpeed)decodingSpeed
                          error:(NSError * _Nullable *_Nullable)error;
+
+/// HDR-aware encoder with metadata support.
+/// Preserves bit depth, ICC color profile, and EXIF/XMP metadata.
+/// @param platformImage Source image
+/// @param exifData Raw EXIF data in TIFF format (can be nil)
+/// @param xmpData Raw XMP data as UTF-8 XML (can be nil)
+/// @param compressionOption Lossless or lossy compression
+/// @param effort Compression effort 1-9
+/// @param quality Quality 0-100 for lossy mode
+/// @param decodingSpeed Decode speed vs size tradeoff
+/// @param error Error output
+- (nullable NSData *)encodeHDR:(nonnull JXLSystemImage *)platformImage
+                      exifData:(nullable NSData *)exifData
+                       xmpData:(nullable NSData *)xmpData
+             compressionOption:(JXLCompressionOption)compressionOption
+                        effort:(int)effort
+                       quality:(int)quality
+                 decodingSpeed:(JXLEncoderDecodingSpeed)decodingSpeed
+                         error:(NSError * _Nullable *_Nullable)error;
 @end
 
 #endif /* JXLCoder_h */

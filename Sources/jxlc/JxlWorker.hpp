@@ -82,7 +82,9 @@ bool EncodeJxlHDR(
     JxlCompressionOption compressionOption,
     float compressionDistance,
     int effort,
-    int decodingSpeed
+    int decodingSpeed,
+    const std::vector<uint8_t>* exifData = nullptr,  // Optional EXIF data (TIFF format)
+    const std::vector<uint8_t>* xmpData = nullptr    // Optional XMP data (UTF-8 XML)
 );
 
 bool isJXL(std::vector<uint8_t>& src);

@@ -67,6 +67,57 @@ let jxlData = try JXLCoder.encodeHDR(
 )
 ```
 
+### HDR Encoding with Metadata Preservation
+
+To preserve EXIF metadata (date/time, GPS, camera/lens info, exposure settings):
+
+```swift
+import JxlCoder
+
+let sourceURL = URL(fileURLWithPath: "/path/to/image.heic")
+let image = UIImage(contentsOfFile: sourceURL.path)!
+
+// Extract metadata from source file
+let metadata = try JXLMetadata.extract(from: sourceURL)
+
+// Encode with metadata
+let jxlData = try JXLCoder.encodeHDR(
+    image: image,
+    metadata: metadata,
+    compressionOption: .lossless
+)
+```
+
+#### Working with ImageIO Properties
+
+If you already have metadata from `CGImageSourceCopyPropertiesAtIndex` and need to modify it (e.g., strip orientation after applying rotation):
+
+```swift
+import ImageIO
+
+// Get properties from your source
+let source = CGImageSourceCreateWithURL(url as CFURL, nil)!
+var properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as! [String: Any]
+
+// Modify as needed (e.g., strip orientation since you've applied it to pixels)
+if var tiff = properties[kCGImagePropertyTIFFDictionary as String] as? [String: Any] {
+    tiff.removeValue(forKey: kCGImagePropertyTIFFOrientation as String)
+    properties[kCGImagePropertyTIFFDictionary as String] = tiff
+}
+
+// Create metadata from modified dictionary
+let metadata = try JXLMetadata(properties: properties)
+
+// Encode with your processed image and modified metadata
+let jxlData = try JXLCoder.encodeHDR(
+    image: processedImage,
+    metadata: metadata,
+    compressionOption: .lossless
+)
+```
+
+**Note:** The `JXLMetadata(properties:)` initializer re-serializes the dictionary to EXIF format via `CGImageDestination`. Common tags (date/time, GPS, camera, lens, exposure) are preserved. Exotic or proprietary tags may be lost during re-serialization.
+
 ### Decoding (Unchanged)
 
 ```swift
@@ -139,7 +190,17 @@ let data = try JXLCoder.encode(image: image)  // 8-bit sRGB only
 ```swift
 public static func encodeHDR(
     image: JXLPlatformImage,
-    compressionOption: JXLCompressionOption = .lossless,  // fixed typo from original
+    compressionOption: JXLCompressionOption = .lossless,
+    effort: Int = 7,
+    quality: Int = 0,
+    decodingSpeed: JXLEncoderDecodingSpeed = .slowest
+) throws -> Data
+
+// With metadata preservation
+public static func encodeHDR(
+    image: JXLPlatformImage,
+    metadata: JXLMetadata?,
+    compressionOption: JXLCompressionOption = .lossless,
     effort: Int = 7,
     quality: Int = 0,
     decodingSpeed: JXLEncoderDecodingSpeed = .slowest
@@ -148,12 +209,36 @@ public static func encodeHDR(
 
 **Parameters:**
 - `image`: Source UIImage/NSImage (any bit depth)
+- `metadata`: Optional `JXLMetadata` to embed EXIF/XMP in the JXL file
 - `compressionOption`: `.lossless` (default, best for archival) or `.lossy`
 - `effort`: 1-9, compression effort (default 7). Higher = smaller file, slower encode
 - `quality`: 0-100, only for lossy mode. 0 = best quality (distance ~1.0)
 - `decodingSpeed`: Trade-off between decode speed and file size
 
 **Returns:** JXL encoded Data
+
+### `JXLMetadata`
+
+```swift
+public struct JXLMetadata {
+    public let exifData: Data?
+    public let xmpData: Data?
+
+    // Initialize with raw byte data
+    public init(exifData: Data? = nil, xmpData: Data? = nil)
+
+    // Initialize from ImageIO properties dictionary
+    public init(properties: [String: Any]) throws
+
+    // Extract from source file
+    public static func extract(from url: URL) throws -> JXLMetadata
+    public static func extract(from data: Data) throws -> JXLMetadata
+}
+```
+
+**Common use cases:**
+- `JXLMetadata.extract(from: url)`: Extract metadata from source file (JPEG, HEIC, PNG, DNG)
+- `JXLMetadata(properties: dict)`: Create from CGImageSource properties (allows modification before encoding)
 
 ## Platform Support
 
