@@ -689,5 +689,12 @@ bool EncodeJxlHDR(
     }
 
     compressed->resize(next_out - compressed->data());
+
+    // DEBUG: Log final compressed size
+    fprintf(stderr, "[JXL HDR Encode] Final size: %.2f MB (%.1f:1 ratio from %zu bytes raw)\n",
+            compressed->size() / (1024.0 * 1024.0),
+            (double)(xsize * ysize * numChannels * (containerBitsPerSample / 8)) / compressed->size(),
+            pixels.size());
+
     return status == JXL_ENC_SUCCESS;
 }
