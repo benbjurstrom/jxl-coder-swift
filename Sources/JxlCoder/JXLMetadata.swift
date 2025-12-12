@@ -128,61 +128,141 @@ public struct JXLMetadata {
     /// then extracts the raw bytes.
     ///
     /// IMPORTANT: RAW files (DNG, ARW, CR3, HIF) often contain huge embedded JPEG previews
-    /// (20-30MB) in their MakerNote or Raw dictionaries. We filter these out to avoid
-    /// bloating the JXL file with redundant preview data.
+    /// (20-30MB) in MakerNote, CIFF, DNG, or other dictionaries. We only preserve the
+    /// essential metadata fields to avoid bloating the JXL file.
     private static func serializePropertiesToExif(_ properties: [String: Any]) throws -> Data? {
-        // Check if there's any EXIF/TIFF/GPS data worth preserving
-        let hasExif = properties[kCGImagePropertyExifDictionary as String] != nil
-        let hasTiff = properties[kCGImagePropertyTIFFDictionary as String] != nil
-        let hasGps = properties[kCGImagePropertyGPSDictionary as String] != nil
-        let hasIptc = properties[kCGImagePropertyIPTCDictionary as String] != nil
+        // Build a clean properties dictionary with only essential metadata
+        var cleanProperties: [String: Any] = [:]
 
-        guard hasExif || hasTiff || hasGps || hasIptc else {
-            return nil
-        }
+        // === EXIF Dictionary - filter aggressively ===
+        if let exifDict = properties[kCGImagePropertyExifDictionary as String] as? [String: Any] {
+            var cleanExif: [String: Any] = [:]
 
-        // Filter properties to only include standard metadata dictionaries
-        // Exclude: Raw data, MakerNote (contains huge previews), thumbnails, etc.
-        var filteredProperties: [String: Any] = [:]
+            // Only keep specific, small EXIF fields
+            let exifKeysToKeep: [CFString] = [
+                kCGImagePropertyExifDateTimeOriginal,
+                kCGImagePropertyExifDateTimeDigitized,
+                kCGImagePropertyExifExposureTime,
+                kCGImagePropertyExifFNumber,
+                kCGImagePropertyExifISOSpeedRatings,
+                kCGImagePropertyExifFocalLength,
+                kCGImagePropertyExifFocalLenIn35mmFilm,
+                kCGImagePropertyExifLensMake,
+                kCGImagePropertyExifLensModel,
+                kCGImagePropertyExifLensSpecification,
+                kCGImagePropertyExifExposureProgram,
+                kCGImagePropertyExifExposureMode,
+                kCGImagePropertyExifMeteringMode,
+                kCGImagePropertyExifFlash,
+                kCGImagePropertyExifWhiteBalance,
+                kCGImagePropertyExifExposureBiasValue,
+                kCGImagePropertyExifApertureValue,
+                kCGImagePropertyExifShutterSpeedValue,
+                kCGImagePropertyExifBrightnessValue,
+                kCGImagePropertyExifColorSpace,
+                kCGImagePropertyExifPixelXDimension,
+                kCGImagePropertyExifPixelYDimension,
+                kCGImagePropertyExifSubsecTimeOriginal,
+                kCGImagePropertyExifBodySerialNumber,
+                kCGImagePropertyExifLensSerialNumber,
+            ]
 
-        // Standard metadata keys to preserve
-        let keysToPreserve: [CFString] = [
-            kCGImagePropertyExifDictionary,      // EXIF: exposure, date, camera settings
-            kCGImagePropertyTIFFDictionary,      // TIFF: make, model, software
-            kCGImagePropertyGPSDictionary,       // GPS: location data
-            kCGImagePropertyIPTCDictionary,      // IPTC: caption, keywords, copyright
-            kCGImagePropertyCIFFDictionary,      // Canon-specific
-            kCGImagePropertyDNGDictionary,       // DNG-specific
-            kCGImagePropertyExifAuxDictionary,   // Lens info
-        ]
-
-        for key in keysToPreserve {
-            let keyString = key as String
-            if let value = properties[keyString] {
-                // For EXIF dictionary, filter out MakerNote which can be huge
-                if keyString == kCGImagePropertyExifDictionary as String,
-                   var exifDict = value as? [String: Any] {
-                    exifDict.removeValue(forKey: kCGImagePropertyExifMakerNote as String)
-                    filteredProperties[keyString] = exifDict
-                } else {
-                    filteredProperties[keyString] = value
+            for key in exifKeysToKeep {
+                if let value = exifDict[key as String] {
+                    cleanExif[key as String] = value
                 }
+            }
+
+            if !cleanExif.isEmpty {
+                cleanProperties[kCGImagePropertyExifDictionary as String] = cleanExif
             }
         }
 
-        // Also preserve top-level properties that are small
-        if let orientation = properties[kCGImagePropertyOrientation as String] {
-            filteredProperties[kCGImagePropertyOrientation as String] = orientation
-        }
-        if let colorModel = properties[kCGImagePropertyColorModel as String] {
-            filteredProperties[kCGImagePropertyColorModel as String] = colorModel
-        }
-        if let profileName = properties[kCGImagePropertyProfileName as String] {
-            filteredProperties[kCGImagePropertyProfileName as String] = profileName
+        // === TIFF Dictionary - filter aggressively ===
+        if let tiffDict = properties[kCGImagePropertyTIFFDictionary as String] as? [String: Any] {
+            var cleanTiff: [String: Any] = [:]
+
+            let tiffKeysToKeep: [CFString] = [
+                kCGImagePropertyTIFFMake,
+                kCGImagePropertyTIFFModel,
+                kCGImagePropertyTIFFSoftware,
+                kCGImagePropertyTIFFDateTime,
+                kCGImagePropertyTIFFArtist,
+                kCGImagePropertyTIFFCopyright,
+                kCGImagePropertyTIFFOrientation,
+                kCGImagePropertyTIFFXResolution,
+                kCGImagePropertyTIFFYResolution,
+                kCGImagePropertyTIFFResolutionUnit,
+            ]
+
+            for key in tiffKeysToKeep {
+                if let value = tiffDict[key as String] {
+                    cleanTiff[key as String] = value
+                }
+            }
+
+            if !cleanTiff.isEmpty {
+                cleanProperties[kCGImagePropertyTIFFDictionary as String] = cleanTiff
+            }
         }
 
-        guard !filteredProperties.isEmpty else {
+        // === GPS Dictionary - keep entirely (it's always small) ===
+        if let gpsDict = properties[kCGImagePropertyGPSDictionary as String] {
+            cleanProperties[kCGImagePropertyGPSDictionary as String] = gpsDict
+        }
+
+        // === IPTC Dictionary - filter to essential fields ===
+        if let iptcDict = properties[kCGImagePropertyIPTCDictionary as String] as? [String: Any] {
+            var cleanIptc: [String: Any] = [:]
+
+            let iptcKeysToKeep: [CFString] = [
+                kCGImagePropertyIPTCCaptionAbstract,
+                kCGImagePropertyIPTCKeywords,
+                kCGImagePropertyIPTCCopyrightNotice,
+                kCGImagePropertyIPTCCreatorContactInfo,
+                kCGImagePropertyIPTCDateCreated,
+                kCGImagePropertyIPTCTimeCreated,
+            ]
+
+            for key in iptcKeysToKeep {
+                if let value = iptcDict[key as String] {
+                    cleanIptc[key as String] = value
+                }
+            }
+
+            if !cleanIptc.isEmpty {
+                cleanProperties[kCGImagePropertyIPTCDictionary as String] = cleanIptc
+            }
+        }
+
+        // === Top-level properties ===
+        if let orientation = properties[kCGImagePropertyOrientation as String] {
+            cleanProperties[kCGImagePropertyOrientation as String] = orientation
+        }
+
+        // DO NOT include: CIFF, DNG, ExifAux, MakerNote, Raw dictionaries
+        // These often contain huge embedded previews or proprietary data
+
+        guard !cleanProperties.isEmpty else {
             return nil
+        }
+
+        // Debug: log what we're including
+        print("[JXLMetadata] Building EXIF from filtered properties:")
+        for (key, value) in cleanProperties {
+            if let dict = value as? [String: Any] {
+                print("[JXLMetadata]   \(key): \(dict.count) fields")
+                // Check for any suspiciously large values
+                for (subkey, subvalue) in dict {
+                    if let data = subvalue as? Data, data.count > 1000 {
+                        print("[JXLMetadata]     WARNING: \(subkey) contains \(data.count) bytes of data!")
+                    } else if let arr = subvalue as? [Any], arr.count > 100 {
+                        print("[JXLMetadata]     WARNING: \(subkey) is array with \(arr.count) elements!")
+                    }
+                }
+            } else {
+                print("[JXLMetadata]   \(key): \(type(of: value))")
+            }
         }
 
         // Create a 1x1 dummy image
@@ -201,11 +281,20 @@ public struct JXLMetadata {
             throw JXLMetadataError.serializationFailed
         }
 
-        // Add the image with filtered metadata properties
-        CGImageDestinationAddImage(destination, dummyImage, filteredProperties as CFDictionary)
+        // Add the image with clean metadata properties
+        CGImageDestinationAddImage(destination, dummyImage, cleanProperties as CFDictionary)
 
         guard CGImageDestinationFinalize(destination) else {
             throw JXLMetadataError.serializationFailed
+        }
+
+        print("[JXLMetadata] Serialized TIFF/EXIF size: \(mutableData.length) bytes")
+
+        // Sanity check: EXIF metadata should never be more than ~100KB
+        // If it's larger, something went wrong - return nil to skip metadata
+        if mutableData.length > 100_000 {
+            print("[JXLMetadata] ERROR: Serialized EXIF is \(mutableData.length) bytes - way too large! Skipping metadata.")
+            return nil
         }
 
         // The TIFF data now contains EXIF in its IFD structure
