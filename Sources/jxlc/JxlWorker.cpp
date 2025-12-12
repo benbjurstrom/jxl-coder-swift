@@ -387,6 +387,14 @@ bool EncodeJxlHDR(
     const std::vector<uint8_t>* exifData,
     const std::vector<uint8_t>* xmpData
 ) {
+    // DEBUG: Log encoding parameters
+    fprintf(stderr, "[JXL HDR Encode] %ux%u, %d channels, container=%d-bit, original=%d-bit, isFloat=%d\n",
+            xsize, ysize, numChannels, containerBitsPerSample, originalBitsPerSample, isFloat);
+    fprintf(stderr, "[JXL HDR Encode] compression=%s, distance=%.2f, effort=%d, decodingSpeed=%d\n",
+            compressionOption == lossless ? "lossless" : "lossy", compressionDistance, effort, decodingSpeed);
+    fprintf(stderr, "[JXL HDR Encode] transfer=%d, primaries=%d, hasICC=%d\n",
+            (int)transferFunction, (int)colorPrimaries, iccProfile != nullptr && !iccProfile->empty());
+
     auto enc = JxlEncoderMake(nullptr);
     auto runner = JxlThreadParallelRunnerMake(
         nullptr, JxlThreadParallelRunnerDefaultNumWorkerThreads());
