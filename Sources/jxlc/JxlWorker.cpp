@@ -554,15 +554,13 @@ bool EncodeJxlHDR(
         JxlEncoderFrameSettingsCreate(enc.get(), nullptr);
 
     // Bit depth setting - use original precision for compression efficiency
-    // JXL_BIT_DEPTH_FROM_CODESTREAM tells encoder to use basicInfo.bits_per_sample (10-bit)
-    // rather than inferring from pixel format (which would be 16-bit for UINT16 container)
+    // This tells the encoder that e.g. 10-bit data is stored in 16-bit container
     JxlBitDepth depth;
     depth.bits_per_sample = originalBitsPerSample;
     depth.exponent_bits_per_sample = isFloat ? basicInfo.exponent_bits_per_sample : 0;
-    depth.type = JXL_BIT_DEPTH_FROM_CODESTREAM;
+    depth.type = JXL_BIT_DEPTH_FROM_PIXEL_FORMAT;
     if (JXL_ENC_SUCCESS != JxlEncoderSetFrameBitDepth(frameSettings, &depth)) {
-        fprintf(stderr, "[JXL HDR Encode] Warning: SetFrameBitDepth failed\n");
-        // Continue anyway - not fatal
+        return false;
     }
 
     // Lossless mode

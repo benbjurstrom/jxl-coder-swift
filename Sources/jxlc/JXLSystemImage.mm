@@ -650,12 +650,12 @@ static void unpackPacked10BitToRGB16(const uint32_t* src, uint16_t* dst, size_t 
             b = (pixel >> 2) & 0x3FF;
         }
 
-        // Scale 10-bit (0-1023) to 16-bit (0-65535)
-        // Optimal scaling: val * 65535 / 1023 ≈ val * 64 + val / 16
-        // Simpler approximation: (val << 6) | (val >> 4)
-        dst[i * 3 + 0] = (r << 6) | (r >> 4);
-        dst[i * 3 + 1] = (g << 6) | (g >> 4);
-        dst[i * 3 + 2] = (b << 6) | (b >> 4);
+        // Place 10-bit values in upper bits, leave lower 6 bits as zero
+        // This preserves the original precision without adding fake precision
+        // that would hurt compression. The encoder knows only 10 bits are significant.
+        dst[i * 3 + 0] = r << 6;
+        dst[i * 3 + 1] = g << 6;
+        dst[i * 3 + 2] = b << 6;
     }
 }
 
