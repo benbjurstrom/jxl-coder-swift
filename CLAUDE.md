@@ -128,7 +128,7 @@ For sources like 10-bit HEIC stored in 16-bit containers:
 
 This tells libjxl only 10 bits are significant, improving lossless compression.
 
-For 16-bit integer data, `detectActualBitDepth16()` samples pixel values to detect if data is actually 8, 10, 12, or 14 bits stored in a 16-bit container.
+For 16-bit integer data, `detectActualBitDepth16()` samples pixel values to detect if data is actually 8, 10, 12, or 14 bits stored in a 16-bit container. This detection runs for ALL 16-bit sources including HDR/PQ/HLG content, since even high-end camera RAW files (Sony ARW, Canon CR3) are 12-14 bit max - true 16-bit sources are essentially non-existent in photography.
 
 ### Supported Source Formats
 
