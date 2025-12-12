@@ -26,6 +26,8 @@
 #import <Foundation/Foundation.h>
 #import "JXLSystemImage.hpp"
 #import <Accelerate/Accelerate.h>
+#include <algorithm>
+#include <cmath>
 
 @implementation JXLSystemImage (JXLColorData)
 
@@ -521,13 +523,14 @@ static int detectActualBitDepth16(const uint16_t* data, size_t pixelCount, int n
     }
 
     // Also check for patterns that indicate lower bit depth
-    // 10-bit data scaled to 16-bit: max value around 65472 (1023 << 6)
+    // 10-bit data scaled to 16-bit:
+    //   - left-shifted: max value around 65472 (1023 << 6)
+    //   - full-range scaled: max value around 65535 (round(1023 * 65535/1023))
     // 12-bit data scaled to 16-bit: max value around 65520 (4095 << 4)
     // 14-bit data scaled to 16-bit: max value around 65532 (16383 << 2)
 
     // Check if values only use upper bits (indicating scaled lower-precision data)
     // For genuine 10-bit data scaled to 16-bit, lower 6 bits should show a pattern
-    uint16_t lowerBitsMask = 0;
     size_t samplesChecked = 0;
     bool hasLower6Bits = false;
     bool hasLower4Bits = false;
@@ -554,18 +557,58 @@ static int detectActualBitDepth16(const uint16_t* data, size_t pixelCount, int n
         }
     }
 
-    // Determine bit depth based on analysis
+    // Determine bit depth based on analysis (fast path for simple left-shifted sources)
     if (maxValue <= 255) {
         return 8;  // Data is actually 8-bit
     } else if (maxValue <= 1023 || (!hasLower6Bits && maxValue <= 65472)) {
-        return 10; // 10-bit data (possibly scaled)
+        return 10; // 10-bit data (left-shifted / redundant low bits)
     } else if (maxValue <= 4095 || (!hasLower4Bits && maxValue <= 65520)) {
-        return 12; // 12-bit data (possibly scaled)
+        return 12; // 12-bit data (left-shifted / redundant low bits)
     } else if (maxValue <= 16383 || (!hasLower2Bits && maxValue <= 65532)) {
-        return 14; // 14-bit data (possibly scaled)
+        return 14; // 14-bit data (left-shifted / redundant low bits)
     }
 
-    return 16; // True 16-bit data
+    // Fallback: some decoders scale lower-precision data to full UINT16 range
+    // (e.g. val16 = round(val10 * 65535/1023)), which makes low bits non-zero
+    // and maxValue reach 65535. Detect by checking whether samples lie close to
+    // a smaller-bit quantization grid.
+    auto matchesQuantizedBitDepth = [&](int candidateBits) -> bool {
+        const uint32_t maxCandidate = (1u << candidateBits) - 1u;
+        const double stepSize = 65535.0 / static_cast<double>(maxCandidate);
+
+        double totalError = 0.0;
+        uint16_t maxError = 0;
+        size_t totalSamples = 0;
+
+        for (size_t i = 0; i < pixelCount; i += step) {
+            for (int c = 0; c < numChannels; c++) {
+                uint16_t v = data[i * numChannels + c];
+                uint32_t vCandidate = static_cast<uint32_t>(
+                    llround(static_cast<double>(v) * maxCandidate / 65535.0));
+                uint32_t recon = static_cast<uint32_t>(
+                    llround(static_cast<double>(vCandidate) * 65535.0 / maxCandidate));
+                uint16_t err = (recon > v) ? (uint16_t)(recon - v) : (uint16_t)(v - recon);
+                totalError += err;
+                if (err > maxError) maxError = err;
+                totalSamples++;
+            }
+        }
+
+        if (totalSamples == 0) return false;
+        const double meanError = totalError / static_cast<double>(totalSamples);
+
+        // Require errors to be small relative to the candidate quantization step.
+        return meanError <= stepSize * 0.10 && maxError <= stepSize * 0.50;
+    };
+
+    const int candidates[] = {8, 10, 12, 14};
+    for (int candidateBits : candidates) {
+        if (matchesQuantizedBitDepth(candidateBits)) {
+            return candidateBits;
+        }
+    }
+
+    return 16; // True 16-bit data (or heavily dithered/rescaled)
 }
 
 // Unpack ARGB2101010 / RGBX1010102 packed 10-bit format to 16-bit RGB
