@@ -63,9 +63,25 @@ let jxlData = try JXLCoder.encodeHDR(
     image: image,
     compressionOption: .lossy,
     effort: 7,
-    quality: 90  // 0-100, higher = better quality
+    distance: 1.0  // 0.0 = lossless, 1.0 = visually lossless, 15.0 = max lossy
 )
 ```
+
+### Distance Parameter
+
+The `distance` parameter controls lossy compression quality using libjxl's native scale:
+
+| Distance | Description | Comparable To |
+|----------|-------------|---------------|
+| 0.0 | Mathematically lossless | PNG |
+| 1.0 | Visually lossless (default) | JPEG q90-95 |
+| 2.0 | High quality | JPEG q85 |
+| 3.0 | Good quality | JPEG q80 |
+| 5.0 | Medium quality | JPEG q70 |
+| 10.0 | Low quality | JPEG q50 |
+| 15.0 | Very low quality | JPEG q30 |
+
+The scale is perceptual - lower distance = higher quality. For archival use, `distance: 1.0` (visually lossless) is recommended. For web delivery, `distance: 2.0-3.0` provides good quality at smaller sizes.
 
 ### HDR Encoding with Metadata Preservation
 
@@ -192,7 +208,7 @@ public static func encodeHDR(
     image: JXLPlatformImage,
     compressionOption: JXLCompressionOption = .lossless,
     effort: Int = 7,
-    quality: Int = 0,
+    distance: Float = 1.0,
     decodingSpeed: JXLEncoderDecodingSpeed = .slowest
 ) throws -> Data
 
@@ -202,7 +218,7 @@ public static func encodeHDR(
     metadata: JXLMetadata?,
     compressionOption: JXLCompressionOption = .lossless,
     effort: Int = 7,
-    quality: Int = 0,
+    distance: Float = 1.0,
     decodingSpeed: JXLEncoderDecodingSpeed = .slowest
 ) throws -> Data
 ```
@@ -212,7 +228,7 @@ public static func encodeHDR(
 - `metadata`: Optional `JXLMetadata` to embed EXIF/XMP in the JXL file
 - `compressionOption`: `.lossless` (default, best for archival) or `.lossy`
 - `effort`: 1-9, compression effort (default 7). Higher = smaller file, slower encode
-- `quality`: 0-100, only for lossy mode. 0 = best quality (distance ~1.0)
+- `distance`: 0.0-15.0, lossy compression distance. 0.0 = lossless, 1.0 = visually lossless (default), 15.0 = max lossy. Only used when `compressionOption` is `.lossy`.
 - `decodingSpeed`: Trade-off between decode speed and file size
 
 **Returns:** JXL encoded Data

@@ -172,7 +172,8 @@ public class JXLCoder {
     ///   - image: Source image (supports 8-bit standard, 10-bit HEIC HDR, 12-16 bit RAW)
     ///   - compressionOption: Use `.lossless` for archival, `.lossy` for smaller files
     ///   - effort: Compression effort 1-9, higher = smaller file but slower (7 recommended)
-    ///   - quality: 0-100, only used for lossy mode (0 = best quality, smallest distance)
+    ///   - distance: Lossy compression distance (0.0 = lossless, 1.0 = visually lossless, 15.0 = max lossy).
+    ///               Only used when `compressionOption` is `.lossy`. Default 1.0 (visually lossless).
     ///   - decodingSpeed: Trade decode speed vs file size
     /// - Returns: JXL encoded data preserving full color fidelity and bit depth
     /// - Throws: If encoding fails
@@ -180,14 +181,14 @@ public class JXLCoder {
         image: JXLPlatformImage,
         compressionOption: JXLCompressionOption = .lossless,
         effort: Int = 7,
-        quality: Int = 0,
+        distance: Float = 1.0,
         decodingSpeed: JXLEncoderDecodingSpeed = .slowest
     ) throws -> Data {
         return try shared.encodeHDR(
             image,
             compressionOption: compressionOption,
             effort: Int32(effort),
-            quality: Int32(quality),
+            distance: distance,
             decodingSpeed: decodingSpeed
         )
     }
@@ -207,7 +208,8 @@ public class JXLCoder {
     ///               to extract from source file, or `JXLMetadata(properties:)` from ImageIO dict.
     ///   - compressionOption: Use `.lossless` for archival, `.lossy` for smaller files
     ///   - effort: Compression effort 1-9, higher = smaller file but slower (7 recommended)
-    ///   - quality: 0-100, only used for lossy mode (0 = best quality, smallest distance)
+    ///   - distance: Lossy compression distance (0.0 = lossless, 1.0 = visually lossless, 15.0 = max lossy).
+    ///               Only used when `compressionOption` is `.lossy`. Default 1.0 (visually lossless).
     ///   - decodingSpeed: Trade decode speed vs file size
     /// - Returns: JXL encoded data preserving full color fidelity, bit depth, and metadata
     /// - Throws: If encoding fails
@@ -216,7 +218,7 @@ public class JXLCoder {
         metadata: JXLMetadata?,
         compressionOption: JXLCompressionOption = .lossless,
         effort: Int = 7,
-        quality: Int = 0,
+        distance: Float = 1.0,
         decodingSpeed: JXLEncoderDecodingSpeed = .slowest
     ) throws -> Data {
         return try shared.encodeHDR(
@@ -225,7 +227,7 @@ public class JXLCoder {
             xmpData: metadata?.xmpData,
             compressionOption: compressionOption,
             effort: Int32(effort),
-            quality: Int32(quality),
+            distance: distance,
             decodingSpeed: decodingSpeed
         )
     }

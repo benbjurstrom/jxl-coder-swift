@@ -379,13 +379,13 @@ static inline JxlCompressionOption toJxlCompressionOption(JXLCompressionOption o
 - (nullable NSData *)encodeHDR:(nonnull JXLSystemImage *)platformImage
              compressionOption:(JXLCompressionOption)compressionOption
                         effort:(int)effort
-                       quality:(int)quality
+                      distance:(float)distance
                  decodingSpeed:(JXLEncoderDecodingSpeed)decodingSpeed
                          error:(NSError * _Nullable *_Nullable)error {
     try {
-        if (quality < 0 || quality > 100) {
+        if (distance < 0.0f || distance > 25.0f) {
             *error = [[NSError alloc] initWithDomain:@"JXLCoder" code:500
-                userInfo:@{ NSLocalizedDescriptionKey: @"Quality must be clamped in 0...100" }];
+                userInfo:@{ NSLocalizedDescriptionKey: @"Distance must be in range 0.0...25.0" }];
             return nil;
         }
 
@@ -414,9 +414,6 @@ static inline JxlCompressionOption toJxlCompressionOption(JXLCompressionOption o
 
         // Determine number of channels from bits per pixel / bits per component
         int numChannels = info.bitsPerPixel / info.bitsPerComponent;
-
-        // Map quality to distance
-        float distance = JXLGetDistance(quality);
 
         JXLDataWrapper<uint8_t>* wrapper = new JXLDataWrapper<uint8_t>();
 
@@ -469,13 +466,13 @@ static inline JxlCompressionOption toJxlCompressionOption(JXLCompressionOption o
                        xmpData:(nullable NSData *)xmpData
              compressionOption:(JXLCompressionOption)compressionOption
                         effort:(int)effort
-                       quality:(int)quality
+                      distance:(float)distance
                  decodingSpeed:(JXLEncoderDecodingSpeed)decodingSpeed
                          error:(NSError * _Nullable *_Nullable)error {
     try {
-        if (quality < 0 || quality > 100) {
+        if (distance < 0.0f || distance > 25.0f) {
             *error = [[NSError alloc] initWithDomain:@"JXLCoder" code:500
-                userInfo:@{ NSLocalizedDescriptionKey: @"Quality must be clamped in 0...100" }];
+                userInfo:@{ NSLocalizedDescriptionKey: @"Distance must be in range 0.0...25.0" }];
             return nil;
         }
 
@@ -518,9 +515,6 @@ static inline JxlCompressionOption toJxlCompressionOption(JXLCompressionOption o
 
         // Determine number of channels from bits per pixel / bits per component
         int numChannels = info.bitsPerPixel / info.bitsPerComponent;
-
-        // Map quality to distance
-        float distance = JXLGetDistance(quality);
 
         JXLDataWrapper<uint8_t>* wrapper = new JXLDataWrapper<uint8_t>();
 

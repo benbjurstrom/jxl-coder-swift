@@ -51,7 +51,7 @@
 - (nullable NSData *)encodeHDR:(nonnull JXLSystemImage *)platformImage
              compressionOption:(JXLCompressionOption)compressionOption
                         effort:(int)effort
-                       quality:(int)quality
+                      distance:(float)distance
                  decodingSpeed:(JXLEncoderDecodingSpeed)decodingSpeed
                          error:(NSError * _Nullable *_Nullable)error;
 
@@ -62,7 +62,7 @@
 /// @param xmpData Raw XMP data as UTF-8 XML (can be nil)
 /// @param compressionOption Lossless or lossy compression
 /// @param effort Compression effort 1-9
-/// @param quality Quality 0-100 for lossy mode
+/// @param distance Lossy distance 0.0-15.0 (0=lossless, 1=visually lossless, 15=max lossy)
 /// @param decodingSpeed Decode speed vs size tradeoff
 /// @param error Error output
 - (nullable NSData *)encodeHDR:(nonnull JXLSystemImage *)platformImage
@@ -70,7 +70,7 @@
                        xmpData:(nullable NSData *)xmpData
              compressionOption:(JXLCompressionOption)compressionOption
                         effort:(int)effort
-                       quality:(int)quality
+                      distance:(float)distance
                  decodingSpeed:(JXLEncoderDecodingSpeed)decodingSpeed
                          error:(NSError * _Nullable *_Nullable)error;
 @end
