@@ -126,6 +126,10 @@ public struct JXLMetadata {
     ///
     /// Creates a minimal 1x1 TIFF in memory with the metadata attached,
     /// then extracts the raw bytes.
+    ///
+    /// IMPORTANT: RAW files (DNG, ARW, CR3, HIF) often contain huge embedded JPEG previews
+    /// (20-30MB) in their MakerNote or Raw dictionaries. We filter these out to avoid
+    /// bloating the JXL file with redundant preview data.
     private static func serializePropertiesToExif(_ properties: [String: Any]) throws -> Data? {
         // Check if there's any EXIF/TIFF/GPS data worth preserving
         let hasExif = properties[kCGImagePropertyExifDictionary as String] != nil
@@ -134,6 +138,50 @@ public struct JXLMetadata {
         let hasIptc = properties[kCGImagePropertyIPTCDictionary as String] != nil
 
         guard hasExif || hasTiff || hasGps || hasIptc else {
+            return nil
+        }
+
+        // Filter properties to only include standard metadata dictionaries
+        // Exclude: Raw data, MakerNote (contains huge previews), thumbnails, etc.
+        var filteredProperties: [String: Any] = [:]
+
+        // Standard metadata keys to preserve
+        let keysToPreserve: [CFString] = [
+            kCGImagePropertyExifDictionary,      // EXIF: exposure, date, camera settings
+            kCGImagePropertyTIFFDictionary,      // TIFF: make, model, software
+            kCGImagePropertyGPSDictionary,       // GPS: location data
+            kCGImagePropertyIPTCDictionary,      // IPTC: caption, keywords, copyright
+            kCGImagePropertyCIFFDictionary,      // Canon-specific
+            kCGImagePropertyDNGDictionary,       // DNG-specific
+            kCGImagePropertyExifAuxDictionary,   // Lens info
+        ]
+
+        for key in keysToPreserve {
+            let keyString = key as String
+            if let value = properties[keyString] {
+                // For EXIF dictionary, filter out MakerNote which can be huge
+                if keyString == kCGImagePropertyExifDictionary as String,
+                   var exifDict = value as? [String: Any] {
+                    exifDict.removeValue(forKey: kCGImagePropertyExifMakerNote as String)
+                    filteredProperties[keyString] = exifDict
+                } else {
+                    filteredProperties[keyString] = value
+                }
+            }
+        }
+
+        // Also preserve top-level properties that are small
+        if let orientation = properties[kCGImagePropertyOrientation as String] {
+            filteredProperties[kCGImagePropertyOrientation as String] = orientation
+        }
+        if let colorModel = properties[kCGImagePropertyColorModel as String] {
+            filteredProperties[kCGImagePropertyColorModel as String] = colorModel
+        }
+        if let profileName = properties[kCGImagePropertyProfileName as String] {
+            filteredProperties[kCGImagePropertyProfileName as String] = profileName
+        }
+
+        guard !filteredProperties.isEmpty else {
             return nil
         }
 
@@ -153,8 +201,8 @@ public struct JXLMetadata {
             throw JXLMetadataError.serializationFailed
         }
 
-        // Add the image with metadata properties
-        CGImageDestinationAddImage(destination, dummyImage, properties as CFDictionary)
+        // Add the image with filtered metadata properties
+        CGImageDestinationAddImage(destination, dummyImage, filteredProperties as CFDictionary)
 
         guard CGImageDestinationFinalize(destination) else {
             throw JXLMetadataError.serializationFailed
