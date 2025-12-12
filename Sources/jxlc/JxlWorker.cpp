@@ -392,8 +392,12 @@ bool EncodeJxlHDR(
             xsize, ysize, numChannels, containerBitsPerSample, originalBitsPerSample, isFloat);
     fprintf(stderr, "[JXL HDR Encode] compression=%s, distance=%.2f, effort=%d, decodingSpeed=%d\n",
             compressionOption == lossless ? "lossless" : "lossy", compressionDistance, effort, decodingSpeed);
-    fprintf(stderr, "[JXL HDR Encode] transfer=%d, primaries=%d, hasICC=%d\n",
-            (int)transferFunction, (int)colorPrimaries, iccProfile != nullptr && !iccProfile->empty());
+    fprintf(stderr, "[JXL HDR Encode] transfer=%d, primaries=%d, hasICC=%d (size=%zu)\n",
+            (int)transferFunction, (int)colorPrimaries,
+            iccProfile != nullptr && !iccProfile->empty(),
+            iccProfile ? iccProfile->size() : 0);
+    fprintf(stderr, "[JXL HDR Encode] exif=%zu bytes, xmp=%zu bytes\n",
+            exifData ? exifData->size() : 0, xmpData ? xmpData->size() : 0);
 
     auto enc = JxlEncoderMake(nullptr);
     auto runner = JxlThreadParallelRunnerMake(
