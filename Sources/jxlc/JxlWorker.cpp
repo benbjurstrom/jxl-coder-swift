@@ -400,13 +400,21 @@ bool EncodeJxlHDR(
             exifData ? exifData->size() : 0, xmpData ? xmpData->size() : 0);
 
     auto enc = JxlEncoderMake(nullptr);
-    auto runner = JxlThreadParallelRunnerMake(
-        nullptr, JxlThreadParallelRunnerDefaultNumWorkerThreads());
+
+    // Limit threads to avoid potential threading issues in libjxl
+    // Some images trigger crashes with high thread counts
+    size_t numThreads = JxlThreadParallelRunnerDefaultNumWorkerThreads();
+    if (numThreads > 8) {
+        numThreads = 8;  // Cap at 8 threads for stability
+    }
+    auto runner = JxlThreadParallelRunnerMake(nullptr, numThreads);
 
     if (JXL_ENC_SUCCESS != JxlEncoderSetParallelRunner(
             enc.get(), JxlThreadParallelRunner, runner.get())) {
         return false;
     }
+
+    fprintf(stderr, "[JXL HDR Encode] Using %zu threads\n", numThreads);
 
     // Basic info - use original bit depth for better compression
     // e.g., 10-bit data in 16-bit container: tell encoder only 10 bits are significant
@@ -677,19 +685,49 @@ bool EncodeJxlHDR(
     JxlEncoderCloseInput(enc.get());
 
     // Process output with dynamic buffer growth
-    compressed->resize(64);
+    // Pre-allocate a reasonable initial buffer based on image size
+    // Estimate: lossy ~1 byte/pixel, lossless ~2 bytes/pixel as starting point
+    size_t estimatedSize = xsize * ysize * numChannels;
+    if (compressionOption == lossless) {
+        estimatedSize = std::max(estimatedSize, (size_t)(xsize * ysize * 2));
+    } else {
+        estimatedSize = std::max(estimatedSize / 4, (size_t)65536);
+    }
+    compressed->resize(estimatedSize);
+
     uint8_t* next_out = compressed->data();
     size_t avail_out = compressed->size();
     JxlEncoderStatus status = JXL_ENC_NEED_MORE_OUTPUT;
 
-    while (status == JXL_ENC_NEED_MORE_OUTPUT) {
+    int iterations = 0;
+    const int maxIterations = 100; // Safety limit
+
+    while (status == JXL_ENC_NEED_MORE_OUTPUT && iterations < maxIterations) {
+        iterations++;
         status = JxlEncoderProcessOutput(enc.get(), &next_out, &avail_out);
+
         if (status == JXL_ENC_NEED_MORE_OUTPUT) {
             size_t offset = next_out - compressed->data();
-            compressed->resize(compressed->size() * 2);
+            size_t newSize = compressed->size() * 2;
+
+            // Safety check: don't allocate more than 2GB
+            if (newSize > 2ULL * 1024 * 1024 * 1024) {
+                fprintf(stderr, "[JXL HDR Encode] ERROR: Output buffer exceeded 2GB limit\n");
+                return false;
+            }
+
+            compressed->resize(newSize);
             next_out = compressed->data() + offset;
             avail_out = compressed->size() - offset;
+        } else if (status == JXL_ENC_ERROR) {
+            fprintf(stderr, "[JXL HDR Encode] ERROR: JxlEncoderProcessOutput returned error\n");
+            return false;
         }
+    }
+
+    if (iterations >= maxIterations) {
+        fprintf(stderr, "[JXL HDR Encode] ERROR: Exceeded maximum iterations (%d)\n", maxIterations);
+        return false;
     }
 
     compressed->resize(next_out - compressed->data());
